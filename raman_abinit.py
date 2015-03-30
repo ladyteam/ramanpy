@@ -42,7 +42,7 @@ def genabinit(abinitfn,modenum,basis,natom,typat,znucl,cartshiftd):
     abinit_fh.write('#Epsilon calculation for %d mode\n' % modenum)
     abinit_fh.write('acell 1.0 1.0 1.0\nrprim\n')
     for b in basis:
-        abinit_fh.write('%20.16f %20.16f %20.16f\n' % (b[0], b[1], b[2]))
+        abinit_fh.write('% 20.16f % 20.16f % 20.16f\n' % (b[0], b[1], b[2]))
     abinit_fh.write('typat ' + ' '.join('%d' % typat[i] for i in range(natom))+'\n')
     abinit_fh.write('znucl ' + ' '.join('%d' % znucl[i] for i in range(len(znucl)))+'\n')
     abinit_fh.write('natom %d\n' % natom)
@@ -327,11 +327,11 @@ while True:
     elif 'rprim' in line:
         try:
             for coor in line.split()[1:]:
-                print float(coor)
+                rprim.append(float(coor)) 
             while True:
                 subline=abinit_fh.readline()
                 if not subline: break
-                if((re.match('^\s*\d*\.',subline) is None) and (re.match('^\s*\d',subline) is None)):
+                if((re.match('^\s*-?\d*\.',subline) is None) and (re.match('^\s*-?\d',subline) is None)):
                     break
                 else:
                     for coor in subline.split():
@@ -340,7 +340,7 @@ while True:
             while True:
                 subline=abinit_fh.readline()
                 if not subline: break
-                if((re.match('^\s*\d*\.',subline) is None) and (re.match('^\s*\d',subline) is None)):
+                if((re.match('^\s*-?\d*\.',subline) is None) and (re.match('^\s*-?\d',subline) is None)):
                     break
                 else:
                     for coor in subline.split():
