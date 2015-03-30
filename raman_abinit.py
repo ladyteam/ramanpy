@@ -87,7 +87,10 @@ import datetime
 import time
 from optparse import OptionParser
 import xml.etree.cElementTree as etree
+
+# shift delta
 delta=0.01
+
 mau=1822.888485
 AMU = 1.6605402e-27 # [kg]
 
@@ -101,8 +104,6 @@ hbar=6.6260695729e-34 #J*s
 EV = 1.60217733e-19 # [J]
 #
 Angst2Bohr=1.889725989
-#Following is Error!!! Just for testing purposes.
-#Angst2Bohr=1.0
 #print sqrt(hbar/AMU/10e12)*10e10 #Angstrom
 basedirname='epsilon'
 Temp=300
@@ -300,6 +301,10 @@ scalecart=[1.0,1.0,1.0]
 while True:
     line=abinit_fh.readline() 
     if not line: break
+    if (re.match('^\s*#',line)):
+        continue
+    if '#' in line:
+        line=re.sub('\s*#.*','',line)
 
     if  'natom' in line:
         if(natom != int(line.split()[1])):
@@ -322,7 +327,10 @@ while True:
         znucl=[int(znuclstr[i]) for i in range(len(znuclstr)) ]
         print('znucl= %s' % znucl)
     elif 'acell' in line:
-        acell=[float(line.split()[i+1]) for i in range(3)] 
+        if re.match('.*acell.*\d+\s*A.*',line):
+            acell=[float(line.split()[i+1])*Angst2Bohr for i in range(3)]
+        else:
+            acell=[float(line.split()[i+1]) for i in range(3)]
         print('acell = %s' % acell)
     elif 'rprim' in line:
         try:
@@ -356,7 +364,13 @@ print('typat = %s' % typat)
 # Start from begining to read xred (xcart and xangs is not implemented)
 abinit_fh.seek(0)
 xred=[]
+xcart=[]
 for line in abinit_fh:
+    if (re.match('^\s*#',line)):
+        continue
+    if '#' in line:
+        line=re.sub('\s*#.*','',line)
+
     if 'xred' in line:
         try:
             for coor in line.split()[1:]:
@@ -374,17 +388,46 @@ for line in abinit_fh:
                 else:
                     for coor in subline.split():
                         xred.append(float(coor))
+    elif 'xcart' in line:
+        try:
+            for coor in line.split()[1:]:
+                xcart.append(float(coor))
+            for subline in abinit_fh:
+                if((re.match('^\s*\d*\.',subline) is None) and (re.match('^\s*\d',subline) is None)):
+                    break
+                else:
+                    for coor in subline.split():
+                        xcart.append(float(coor))
+        except:
+            for subline in abinit_fh:
+                if((re.match('^\s*\d*\.',subline) is None) and (re.match('^\s*\d',subline) is None)):
+                    break
+                else:
+                    for coor in subline.split():
+                        xcart.append(float(coor))
+    elif 'xangs' in line:
+        try:
+            for coor in line.split()[1:]:
+                xcart.append(float(coor)*Angst2Bohr)
+            for subline in abinit_fh:
+                if((re.match('^\s*\d*\.',subline) is None) and (re.match('^\s*\d',subline) is None)):
+                    break
+                else:
+                    for coor in subline.split():
+                        xcart.append(float(coor)*Angst2Bohr)
+        except:
+            for subline in abinit_fh:
+                if((re.match('^\s*\d*\.',subline) is None) and (re.match('^\s*\d',subline) is None)):
+                    break
+                else:
+                    for coor in subline.split():
+                        xcart.append(float(coor)*Angst2Bohr)
+
 
 
 if len(rprim) != 9:
     print('Error reading rprim array')
     sys.exit(1)
-elif len(xred) != natom*3:
-    print('Error reading atom coordinate array')
-    sys.exit(1)
-
-
-print('xred = %s' % xred)
 
 rprimd=[]
 
@@ -393,9 +436,8 @@ for i in range(3):
     rprimd.append([scalecart[k]*rprim[i*3+k]*acell[i] for k in range(3)])
 
 basis=np.array(rprimd).reshape(3,3)
-directpos=np.array(xred).reshape(natom,3)
-print ('basis = %s' % basis)
-print ('xcart = %s' % directpos)
+
+
 
 # Masses aray generation on znucl and typat data
 masses=[]
@@ -404,7 +446,18 @@ for i in range (natom):
 
 cvol=np.dot(basis[0],np.cross(basis[1],basis[2]))
 
-cartpos=direct2cart(directpos,basis)
+
+
+if len(xred) != natom*3:
+  if len(xcart) != natom*3:
+    print('Error reading atom coordinate array')
+    sys.exit(1)
+  else:
+    cartpos=np.array(xcart).reshape(natom,3)
+else:
+    directpos=np.array(xred).reshape(natom,3)
+    cartpos=direct2cart(directpos,basis)
+
 
 # GENERATION OF DISPLACEMENTS ABINIT INPUT FILES
 #j - mode number; i -atom number
