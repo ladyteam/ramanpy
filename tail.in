@@ -2,6 +2,9 @@ nband 32
 spgroup 1
 ndtset  3
 
+#Acoostic sum rule in output file turn on
+rfasr 1
+
 #Ground state calculation
   kptopt1   1             # Automatic generation of k points, taking
                           # into account the symmetry
