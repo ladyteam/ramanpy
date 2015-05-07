@@ -515,7 +515,7 @@ else:
             if (len(epsm)<3) or (len(epsp)<3):
                 continue
     # for DFPT compare we have multiplyer 
-            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)*ramanmult/(args.delta*sqrt(hbar/(AMU*masses[i]*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)
+            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)*ramanmult/(args.delta*sqrt(hbar/(AMU*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)
 
             for i in range(3):
                 print (' '.join('% 09.7f' % a for a in  alpha[i]))
