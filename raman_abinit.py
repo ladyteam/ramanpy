@@ -14,13 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-# The raman tensor calculation based on VASP calculation of dielectric constants
+# The raman tensor calculation based on DFPT calculation of dielectric tensors
 # for shifted along normal modes geometry.
 #
 #
-# Author; Eugene Roginskii
+# Author: Eugene Roginskii
 #
-# Some code was borrowed from very powerfool PHONOPY project
+# Some code was borrowed from very powerful PHONOPY project
 # http://phonopy.sourceforge.net/
 # Copyright 2009, Atsushi Togo.
 
