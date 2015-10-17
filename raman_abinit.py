@@ -14,13 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-# The raman tensor calculation based on DFPT calculation of dielectric tensors
+# The raman tensor calculation based on VASP calculation of dielectric constants
 # for shifted along normal modes geometry.
 #
 #
-# Author: Eugene Roginskii
+# Author; Eugene Roginskii
 #
-# Some code was borrowed from very powerful PHONOPY project
+# Some code was borrowed from very powerfool PHONOPY project
 # http://phonopy.sourceforge.net/
 # Copyright 2009, Atsushi Togo.
 
@@ -37,10 +37,9 @@ def direct2cart(directpos,basis):
     return np.array(cart)
 
 
-def genabinit(abinitfn,modenum,basis,natom,typat,znucl,cartshiftd,comment):
+def genabinit(abinitfn,modenum,basis,natom,typat,znucl,cartshiftd):
     abinit_fh=open(abinitfn,'w')
     abinit_fh.write('#Epsilon calculation for %d mode\n' % modenum)
-    abinit_fh.write('# %s\n' % comment)
     abinit_fh.write('acell 1.0 1.0 1.0\nrprim\n')
     for b in basis:
         abinit_fh.write('% 20.16f % 20.16f % 20.16f\n' % (b[0], b[1], b[2]))
@@ -86,9 +85,11 @@ from shutil import move
 import os
 import datetime
 import time
-import argparse
+from optparse import OptionParser
 import xml.etree.cElementTree as etree
 
+# shift delta
+delta=0.01
 
 mau=1822.888485
 AMU = 1.6605402e-27 # [kg]
@@ -232,29 +233,27 @@ atom_data = [
     ]
 
 
-parser = argparse.ArgumentParser(description='The program is to calculate Raman tensor with finite displacements method by ABINIT code')
+# NB switch to argparse module
 
-
-parser.add_argument("-i", "--input", action="store", type=str, dest="abinit_fn", help="Abinit Input filename")
-parser.add_argument("-d", "--dynmat", action="store", type=str, dest="dynmat_fn", default='qpoints.yaml', help="Dynmat in yaml format filename")
-parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='calc',
+parser = OptionParser()
+parser.add_option("-i", "--input", action="store", type="string", dest="abinit_fn", help="Abinit Input filename")
+parser.add_option("-p", "--policy", action="store", type="string", dest="policy", default='calc',
                   help="Script modes. 'displ' -- generate abinit input files; 'calc' -- calculate raman tensor (default)")
-parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.01, help="Shift vector Delta")
 
-args = parser.parse_args()
+(options, args) = parser.parse_args()
 
-if (args.abinit_fn == None):
+if (options.abinit_fn == None):
     print('Error. No input filename was given.')
     sys.exit(1)
 
 try:
-    abinit_fh = open(args.abinit_fn, 'r')
+    abinit_fh = open(options.abinit_fn, 'r')
 except IOError:
     print "ERROR Couldn't open qpoints file, exiting...\n"
     sys.exit(1)
 
 try:
-    qpoints_fh = open(args.dynmat_fn, 'r')
+    qpoints_fh = open('qpoints.yaml', 'r')
 except IOError:
     print "ERROR Couldn't open qpoints file, exiting...\n"
     sys.exit(1)
@@ -465,7 +464,7 @@ else:
 #for i in range(natom):
 #    for j in range(natom*3)
 #        cartshiftd[i,j]=[999.0,999.0,999.0]
-if (args.policy == 'displ'):
+if (options.policy == 'displ'):
     for j in range(natom*3):
         cartshiftdm=[]
         cartshiftdp=[]
@@ -478,7 +477,7 @@ if (args.policy == 'displ'):
         print('====eigenvector:====')
         for i in range(natom):
             print(" ".join('%9.7f' % eigvecs[i*3+l,j] for l in range(3)))
-        print('delta = %f' % args.delta)
+        print('delta = %f' % delta)
 
         print('shiftvector:')
 
@@ -487,18 +486,18 @@ if (args.policy == 'displ'):
     #        print(["Evec: %17.14f" % eigvecs[i * 3 + l, j].real for l in range(3)])
             shiftvec=[0.0e0,0.0e0,0.0e0]
             for l in range(3):
-                shiftvec[l]=eigvecs[i*3+l,j]*args.delta*sqrt(hbar/(AMU*masses[i]*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr
+                shiftvec[l]=eigvecs[i*3+l,j]*delta*sqrt(hbar/(AMU*masses[i]*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr
             print(["%10.7f" % shiftvec[l] for l in range(3)])
             cartshiftdm.append(cartpos[i]-np.array(shiftvec))
             cartshiftdp.append(cartpos[i]+np.array(shiftvec))
-
+        
         print('shifted:')
         for cartat in cartshiftdm:
             print ("%12.9f %12.9f %12.9f" % (cartat.tolist()[0], cartat.tolist()[1], cartat.tolist()[2]))
         abinitfnm="shiftcell-%03d-1.in" % (j+1)
         abinitfnp="shiftcell-%03d+1.in" % (j+1)
-        genabinit(abinitfnm,j+1,basis,natom,typat,znucl,cartshiftdm,'freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[j] * factorcm),args.delta))
-        genabinit(abinitfnp,j+1,basis,natom,typat,znucl,cartshiftdp,'freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[j] * factorcm),args.delta))
+        genabinit(abinitfnm,j+1,basis,natom,typat,znucl,cartshiftdm)
+        genabinit(abinitfnp,j+1,basis,natom,typat,znucl,cartshiftdp)
 else:
     for j in range(natom*3):
         cartshiftdm=[]
@@ -515,7 +514,7 @@ else:
             if (len(epsm)<3) or (len(epsp)<3):
                 continue
     # for DFPT compare we have multiplyer 
-            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)*ramanmult/(args.delta*sqrt(hbar/(AMU*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)
+            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)*ramanmult/(delta*sqrt(hbar/(AMU*masses[i]*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)
 
             for i in range(3):
                 print (' '.join('% 09.7f' % a for a in  alpha[i]))
@@ -526,7 +525,7 @@ else:
             print ('\nItotal=%9.7f Iparal=%9.7f Iperp=%9.7f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
     # Multiplyer for Intensity at room temperature with 514.5nm excitation line
             print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
-
+            
         else:
             print "No data for mode %d in directory %s or %s" % ((j+1),abinitfnm,abinitfnp) 
 
