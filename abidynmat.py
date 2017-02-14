@@ -179,7 +179,7 @@ Angstr2Bohr=1.8897261245650618
 parser = argparse.ArgumentParser(description='Script to extract Dynamical matrix from abinit output file')
 
 parser.add_argument("-i", "--input", action="store", type=str, dest="abinit_fn",  help="Abinit output filename")
-parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn",  help="Output filename in yaml format")
+parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn",  default='qpoints.yaml', help="Output filename in yaml format")
 parser.add_argument("-d", "--dset", action="store", type=int, dest="dset", default=0, help="Dataset number to extract dynmat from")
 
 args = parser.parse_args()

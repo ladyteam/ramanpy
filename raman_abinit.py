@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-# The raman tensor calculation based on VASP calculation of dielectric constants
+# The raman tensor calculation based on calculation of dielectric constants
 # for shifted along normal modes geometry.
 #
 #
