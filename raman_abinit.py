@@ -236,10 +236,12 @@ parser = argparse.ArgumentParser(description='The program is to calculate Raman 
 
 
 parser.add_argument("-i", "--input", action="store", type=str, dest="abinit_fn", help="Abinit Input filename")
+parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", help="Output filename")
 parser.add_argument("-d", "--dynmat", action="store", type=str, dest="dynmat_fn", default='qpoints.yaml', help="Dynmat in yaml format filename")
 parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='calc',
                   help="Script modes. 'displ' -- generate abinit input files; 'calc' -- calculate raman tensor (default)")
 parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.01, help="Shift vector Delta")
+parser.add_argument("-m", "--mult", action="store", type=float, dest="mult", default=1.0, help="Intensity multiplier")
 
 args = parser.parse_args()
 
@@ -549,6 +551,17 @@ if (args.policy == 'displ'):
         genabinit(abinitfnm,j+1,basis,natom,typat,znucl,cartshiftdm,'freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[j] * factorcm),args.delta))
         genabinit(abinitfnp,j+1,basis,natom,typat,znucl,cartshiftdp,'freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[j] * factorcm),args.delta))
 else:
+    if (args.out_fn == None):
+        print('Error. No output filename was given.')
+        sys.exit(1)
+
+    try:
+        out_fh = open(args.out_fn, 'w')
+    except IOError:
+        print("ERROR Couldn't open output file for writing, exiting...")
+        sys.exit(1)
+    out_fh.write("#  N    freq        xx         xy         xz        yx         yy         yz        zx        zy         zz         G0          G1         G2         Ipar      Iperp      Itot\n")
+
     for j in range(natom*3):
         cartshiftdm=[]
         cartshiftdp=[]
@@ -566,18 +579,22 @@ else:
                     continue
         # for DFPT compare we have multiplyer 
                 alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)*ramanmult/(args.delta*sqrt(hbar/(AMU*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)
+                out_fh.write('%4d % 9.4f ' % ((j+1),frequencies[j]*factorcm))
 
                 for i in range(3):
                     print (' '.join('% 09.7f' % a for a in  alpha[i]))
+                    out_fh.write(' '.join('% 10.7f' % a for a in  alpha[i]))
                     G0+=(alpha[i][i]**2)/3
                     for k in range(3):
                         G1+=((alpha[i][k]-alpha[k][i])**2)/2
                         G2+=((alpha[i][k]+alpha[k][i])**2)/2 + ((alpha[i][i]-alpha[k][k])**2)/3
                 print ('\nItotal=%9.7f Iparal=%9.7f Iperp=%9.7f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
+                out_fh.write(" %10.7f  %10.7f %10.7f %10.7f %10.7f %10.7f \n" % (G0,G1,G2, ((10*G0+4*G2)*args.mult), ((5*G1+3*G2)*args.mult), ((10*G0+7*G2+5*G1)*args.mult) ))
         # Multiplyer for Intensity at room temperature with 514.5nm excitation line
                 print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
             except:
                 print("Failed to calculate data for mode %d" % (j+1))
+                out_fh.write("Failed to calculate data for mode %d\n" % (j+1))
 
         else:
             print( "No data for mode %d in directory %s or %s" % ((j+1),abinitfnm,abinitfnp) )
