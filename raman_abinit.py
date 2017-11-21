@@ -560,7 +560,7 @@ else:
     except IOError:
         print("ERROR Couldn't open output file for writing, exiting...")
         sys.exit(1)
-    out_fh.write("#  N    freq        xx         xy         xz        yx         yy         yz        zx        zy         zz         G0          G1         G2         Ipar      Iperp      Itot\n")
+    out_fh.write("# N     freq          xx          xy          xz          yx          yy          yz          zx          zy         zz          G0        G1         G2         Ipar      Iperp      Itot\n")
 
     for j in range(natom*3):
         cartshiftdm=[]
@@ -577,19 +577,25 @@ else:
                 epsp=np.array(get_epsilon(abinitfnp))
                 if (len(epsm)<3) or (len(epsp)<3):
                     continue
-        # for DFPT compare we have multiplyer 
-                alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)*ramanmult/(args.delta*sqrt(hbar/(AMU*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)
-                out_fh.write('%4d % 9.4f ' % ((j+1),frequencies[j]*factorcm))
+                norm=0
+                for i in range(natom):
+                    for l in range(3):
+                        norm+=(eigvecs[i*3+l,j]*sqrt(1/(masses[i])))**2
+                print("The norm is: %f" % norm)
+        # units: sqrt(Angst/amu)
+                alpha=(epsp-epsm)*sqrt(cvol)*sqrt(norm)/(4*pi)/(args.delta*sqrt(hbar/(AMU*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)/(Angst2Bohr**(3/2))
+                out_fh.write('%4d  %9.5f ' % ((j+1),frequencies[j]*factorcm))
 
                 for i in range(3):
-                    print (' '.join('% 09.7f' % a for a in  alpha[i]))
-                    out_fh.write(' '.join('% 10.7f' % a for a in  alpha[i]))
+                    print (' '.join(' %10.7f' % a for a in  alpha[i]))
+                    out_fh.write(' '.join(' %10.7f' % a for a in  alpha[i]))
+                    out_fh.write(' ')
                     G0+=(alpha[i][i]**2)/3
                     for k in range(3):
                         G1+=((alpha[i][k]-alpha[k][i])**2)/2
                         G2+=((alpha[i][k]+alpha[k][i])**2)/2 + ((alpha[i][i]-alpha[k][k])**2)/3
                 print ('\nItotal=%9.7f Iparal=%9.7f Iperp=%9.7f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
-                out_fh.write(" %10.7f  %10.7f %10.7f %10.7f %10.7f %10.7f \n" % (G0,G1,G2, ((10*G0+4*G2)*args.mult), ((5*G1+3*G2)*args.mult), ((10*G0+7*G2+5*G1)*args.mult) ))
+                out_fh.write("  %9.7f  %9.7f  %9.7f  %9.7f  %9.7f  %9.7f \n" % (G0,G1,G2, ((10*G0+4*G2)*args.mult), ((5*G1+3*G2)*args.mult), ((10*G0+7*G2+5*G1)*args.mult) ))
         # Multiplyer for Intensity at room temperature with 514.5nm excitation line
                 print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
             except:
