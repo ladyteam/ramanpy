@@ -240,7 +240,7 @@ parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", h
 parser.add_argument("-d", "--dynmat", action="store", type=str, dest="dynmat_fn", default='qpoints.yaml', help="Dynmat in yaml format filename")
 parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='calc',
                   help="Script modes. 'displ' -- generate abinit input files; 'calc' -- calculate raman tensor (default)")
-parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.01, help="Shift vector Delta")
+parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.1, help="Shift vector Delta")
 parser.add_argument("-m", "--mult", action="store", type=float, dest="mult", default=1.0, help="Intensity multiplier")
 
 args = parser.parse_args()
@@ -513,9 +513,7 @@ else:
 
 # GENERATION OF DISPLACEMENTS ABINIT INPUT FILES
 #j - mode number; i -atom number
-#for i in range(natom):
-#    for j in range(natom*3)
-#        cartshiftd[i,j]=[999.0,999.0,999.0]
+
 if (args.policy == 'displ'):
     for j in range(natom*3):
         cartshiftdm=[]
@@ -534,11 +532,9 @@ if (args.policy == 'displ'):
         print('shiftvector:')
 
         for i in range(natom):
-    #        print('natom: %d' % (i+1)) 
-    #        print(["Evec: %17.14f" % eigvecs[i * 3 + l, j].real for l in range(3)])
             shiftvec=[0.0e0,0.0e0,0.0e0]
             for l in range(3):
-                shiftvec[l]=eigvecs[i*3+l,j]*args.delta*sqrt(hbar/(AMU*masses[i]*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr
+                shiftvec[l]=eigvecs[i*3+l,j]*args.delta*18.362*sqrt(1/(masses[i]*abs(frequencies[j])*factorcm))*Angst2Bohr 
             print(["%10.7f" % shiftvec[l] for l in range(3)])
             cartshiftdm.append(cartpos[i]-np.array(shiftvec))
             cartshiftdp.append(cartpos[i]+np.array(shiftvec))
@@ -560,14 +556,11 @@ else:
     except IOError:
         print("ERROR Couldn't open output file for writing, exiting...")
         sys.exit(1)
-    out_fh.write("# N     freq          xx          xy          xz          yx          yy          yz          zx          zy         zz          G0        G1         G2         Ipar      Iperp      Itot\n")
+    out_fh.write("# N     freq          xx          xy          xz          yx          yy          yz          zx          zy         zz          Alpha     Gamma2       Ipar      Iperp      Itot\n")
 
     for j in range(natom*3):
         cartshiftdm=[]
         cartshiftdp=[]
-        G0=0
-        G1=0
-        G2=0
         print ('--=== mode: %d %8.5f ===--' % ((j+1),frequencies[j]*factorcm))
         abinitfnm="%s-%03d-1/shiftcell.out" % (basedirname, (j+1))
         abinitfnp="%s-%03d+1/shiftcell.out" % (basedirname, (j+1))
@@ -578,26 +571,23 @@ else:
                 if (len(epsm)<3) or (len(epsp)<3):
                     continue
                 norm=0
-                for i in range(natom):
-                    for l in range(3):
-                        norm+=(eigvecs[i*3+l,j]*sqrt(1/(masses[i])))**2
-                print("The norm is: %f" % norm)
-        # units: sqrt(Angst/amu)
-                alpha=(epsp-epsm)*sqrt(cvol)*sqrt(norm)/(4*pi)/(args.delta*sqrt(hbar/(AMU*abs(frequencies[j])*factorHz))*1e10*Angst2Bohr)/(Angst2Bohr**(3/2))
+                mu=0
+
+        # units (the same as in ABINIT DFPT method): sqrt(Bohr/amu) amu is Atomic mass unit (m_e=1)
+                alpha=(epsp-epsm)/(4*pi)*sqrt(cvol)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[j])*factorcm))*Angst2Bohr)*sqrt(9.10938356/1.6605402*10**-4)
                 out_fh.write('%4d  %9.5f ' % ((j+1),frequencies[j]*factorcm))
 
                 for i in range(3):
                     print (' '.join(' %10.7f' % a for a in  alpha[i]))
                     out_fh.write(' '.join(' %10.7f' % a for a in  alpha[i]))
                     out_fh.write(' ')
-                    G0+=(alpha[i][i]**2)/3
-                    for k in range(3):
-                        G1+=((alpha[i][k]-alpha[k][i])**2)/2
-                        G2+=((alpha[i][k]+alpha[k][i])**2)/2 + ((alpha[i][i]-alpha[k][k])**2)/3
-                print ('\nItotal=%9.7f Iparal=%9.7f Iperp=%9.7f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
-                out_fh.write("  %9.7f  %9.7f  %9.7f  %9.7f  %9.7f  %9.7f \n" % (G0,G1,G2, ((10*G0+4*G2)*args.mult), ((5*G1+3*G2)*args.mult), ((10*G0+7*G2+5*G1)*args.mult) ))
-        # Multiplyer for Intensity at room temperature with 514.5nm excitation line
-                print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
+
+                Alpha=(alpha[0][0]+alpha[1][1]+alpha[2][2])/3
+                gamma2=((alpha[0][0]-alpha[1][1])**2 + (alpha[1][1]-alpha[2][2])**2 +(alpha[2][2]-alpha[0][0])**2)/2
+                gamma2+=3*(alpha[0][1]**2+alpha[0][2]**2+alpha[1][2]**2)
+
+                out_fh.write("  % 9.7f  %9.7f  %9.7f  %9.7f  %9.7f\n" % (Alpha,gamma2, ((gamma2/15)*args.mult), ((45*Alpha**2+4*gamma2)/45*args.mult), (( gamma2/15 + (45*Alpha**2+4*gamma2)/45   )*args.mult) ))
+
             except:
                 print("Failed to calculate data for mode %d" % (j+1))
                 out_fh.write("Failed to calculate data for mode %d\n" % (j+1))
