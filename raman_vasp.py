@@ -471,6 +471,7 @@ if (args.policy == 'displ'):
         genposcar(poscarfnm,j+1,frequencies[j]*args.freqfactor,basis,natom,atom_types,species_atom,cartshiftdm)
         genposcar(poscarfnp,j+1,frequencies[j]*args.freqfactor,basis,natom,atom_types,species_atom,cartshiftdp)
 
+# Calculate Raman
 else:
     try:
         out_fh = open(args.output_fn, 'w')
@@ -480,46 +481,48 @@ else:
 
 
     out_fh.write("#Raman tensor components and rotational invariants Alpha^2,Gamma^2.\n")
-    out_fh.write("#Powder intencity: Ipar=C(G/15); Iperp=(45*G0+4*G1)/45\n")
+    out_fh.write("#Powder intencity: Iperp=(gamma^2/15); Iparal=(45*alpha^2+4*gamma^2)/45\n")
     out_fh.write("# N      freq Efreqp Efreqm     e_xx       e_yy       e_zz       e_xy       e_yz       e_zx      Alpha^2    Gamma^2      Ipar      Iperp      Itot\n")
     print("#mode\tfreq\t\tIpar\t\tIperp\t\tItotal")
-# Print raman tensor in reverse order
-    for j in range(natom*3,0,-1):
+
+    for j in range(natom*3):
         cartshiftdm=[]
         cartshiftdp=[]
 
         G0=0
         G1=0
 
-        vasprunfnm="%s-%03d-1/OUTCAR" % (args.basedirname, j)
-        vasprunfnp="%s-%03d+1/OUTCAR" % (args.basedirname, j)
+        vasprunfnm="%s-%03d-1/OUTCAR" % (args.basedirname, (j+1))
+        vasprunfnp="%s-%03d+1/OUTCAR" % (args.basedirname, (j+1))
+#        print('mode number: %d; dirname %s; freq: %f' %((j+1),vasprunfnp,frequencies[natom*3-j-1]*args.freqfactor))
         if os.path.isfile(vasprunfnm) and os.path.isfile(vasprunfnp):
             try:
-                if (args.policy == 'calc'): 
-                    eopticm, eps = get_epsilon_optics(vasprunfnm,args.freq)
-                    epsm=np.array(eps)
-                    eopticp, eps = get_epsilon_optics(vasprunfnp,args.freq)
-                    epsp=np.array(eps)
+                eopticm, eps = get_epsilon_optics(vasprunfnm,args.freq)
+                epsm=np.array(eps)
+                eopticp, eps = get_epsilon_optics(vasprunfnp,args.freq)
+                epsp=np.array(eps)
+
                 if (len(epsm)<6) or (len(epsp)<6):
                     print ('epsilon data damaged in file %s' % vasprunfnp)
                     continue
 
+
 #   eps- - eps+ since eigenvalues are negative
 # Atomic units: sqrt(Bohr/amu) (me=1, e=1,hbar=1)
-                alpha=(+epsm-epsp)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[j-1])*args.freqfactor)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.ramanmult
+                alpha=(+epsm-epsp)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[natom*3-j-1])*args.freqfactor)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.ramanmult
 
 # Calculate invariance in Long's notation
-                G0=((alpha[0]+alpha[1]+alpha[2])**2)/9
-                G1=( (alpha[0]-alpha[1])**2+(alpha[1]-alpha[2])**2+(alpha[2]-alpha[0])**2 )/2
-                G1+=3*( (alpha[3])**2 + (alpha[4])**2 + (alpha[5])**2 )
+                Alpha=((alpha[0]+alpha[1]+alpha[2]))/3
+                Gamma2=( (alpha[0]-alpha[1])**2+(alpha[1]-alpha[2])**2+(alpha[2]-alpha[0])**2 )/2
+                Gamma2+=3*( (alpha[3])**2 + (alpha[4])**2 + (alpha[5])**2 )
 
-                Ipar=G1/15
-                Iperp=( 45*G0 + 4*G1 )/45
-                print('%4d\t%8.2f\t%12.8f\t%12.8f\t%12.8f' % ((natom*3-j+1), frequencies[j-1]*args.freqfactor,Ipar,Iperp,(Ipar+Iperp)))
+                Iperp=Gamma2/15
+                Ipar=( 45*Alpha**2 + 4*Gamma2 )/45
+                print('%4d\t%8.2f\t%12.8f\t%12.8f\t%12.8f' % ((j+1), frequencies[natom*3-j-1]*args.freqfactor,Ipar,Iperp,(Ipar+Iperp)))
 
-                out_fh.write('%4d  %8.2f  %3.2f  %3.2f  ' % ((natom*3-j+1), frequencies[j-1]*args.freqfactor, eopticm, eopticp))
+                out_fh.write('%4d  %8.2f  %3.2f  %3.2f  ' % ((j+1), frequencies[natom*3-j-1]*args.freqfactor, eopticm, eopticp))
                 out_fh.write(' '.join(" %9.6f" % alpha[i] for i in range(6)))
-                out_fh.write('  % 10.7f % 10.7f % 10.7f % 10.7f % 10.7f\n' % (G0,G1,Ipar,Iperp,(Ipar+Iperp)))
+                out_fh.write('  % 10.7f % 10.7f % 10.7f % 10.7f % 10.7f\n' % (Alpha**2,Gamma2,Ipar,Iperp,(Ipar+Iperp)))
 
             except:
                 print('Filed to calculate raman for mode %d' % (j+1))

@@ -586,7 +586,7 @@ else:
                 gamma2=((alpha[0][0]-alpha[1][1])**2 + (alpha[1][1]-alpha[2][2])**2 +(alpha[2][2]-alpha[0][0])**2)/2
                 gamma2+=3*(alpha[0][1]**2+alpha[0][2]**2+alpha[1][2]**2)
 
-                out_fh.write("  % 9.7f  %9.7f  %9.7f  %9.7f  %9.7f\n" % (Alpha,gamma2, ((gamma2/15)*args.mult), ((45*Alpha**2+4*gamma2)/45*args.mult), (( gamma2/15 + (45*Alpha**2+4*gamma2)/45   )*args.mult) ))
+                out_fh.write("  % 9.7f  %9.7f  %9.7f  %9.7f  %9.7f\n" % ((Alpha**2),gamma2,  ((45*Alpha**2+4*gamma2)/45*args.mult), ((gamma2/15)*args.mult), (( gamma2/15 + (45*Alpha**2+4*gamma2)/45   )*args.mult) ))
 
             except:
                 print("Failed to calculate data for mode %d" % (j+1))
