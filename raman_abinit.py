@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.4
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,22 @@ def chunks(l, n):
         n = 1
     return [l[i:i + n] for i in range(0, len(l), n)]
 
+def strType(var):
+    try:
+        if int(var) == float(var):
+            return 'int'
+    except:
+        try:
+            float(var)
+            return 'float'
+        except:
+            return 'str'
+
+def isNumeric(var):
+    isnum=strType(var)
+    if (isnum == 'int' or isnum == 'float'):
+        return (True)
+    return(False)
 
 def direct2cart(directpos,basis):
     cart=[]
@@ -242,6 +258,7 @@ parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", d
                   help="Script modes. 'displ' -- generate abinit input files; 'calc' -- calculate raman tensor (default)")
 parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.1, help="Shift vector Delta")
 parser.add_argument("-m", "--mult", action="store", type=float, dest="mult", default=1.0, help="Intensity multiplier")
+parser.add_argument("-b", "--born", action="store", type=str, dest="born_fn", help="Born filename to calculate LO modes")
 
 args = parser.parse_args()
 
@@ -494,7 +511,7 @@ for i in range (natom):
     masses.append(float(atom_data[znucl[typat[i]-1]][3]))
 
 cvol=np.dot(basis[0],np.cross(basis[1],basis[2]))
-
+print("Unitcell volume = %f" % cvol)
 
 
 if len(xred) != natom*3:
@@ -572,10 +589,125 @@ else:
                     continue
                 norm=0
                 mu=0
+# LO modes calculations
+                chi2=[[[0 for kk in range(3)] for jj in range(3) ] for ii in range(3)]
+                eps=[]
+                born=[]
+                if(args.born_fn):
+                    try:
+                        born_fh = open(args.born_fn, 'r')
+                        print("Openinig file with Born charges")
+                    except IOError:
+                        print("ERROR Couldn't open file with Born charges for reading, exiting...")
+                        sys.exit(1)
+                    try:
+                        line=born_fh.readline()
+                        qvec=[float(line.split()[ii]) for ii in range(3)]
+                        print(qvec)
+                        line=born_fh.readline()
+                        for ii in range(3):
+                            eps.append([float(line.split()[ii*3+jj]) for jj in range(3)])
+# Effective Born charges
+                        for ii in range(natom):
+                            line=born_fh.readline()
+                            buf=[]
+                            for jj in range(3):
+                                buf.append([float(line.split()[jj*3+kk]) for kk in range(3)])
+                            born.append(buf)
+#Chi2
+                        for line in born_fh:
+                            if (len(line.split())<5):
+                                if ((strType(line.split()[0])=='int') and (strType(line.split()[1])=='int') and (strType(line.split()[2])=='int')):
+#In the output nonlinear d coeff. is given in MKS d(MKS) = d(A.U.)/0.514220632 pm/V; chi2/2=d
+                                    chi2[int(line.split()[0])-1][int(line.split()[1])-1][int(line.split()[2])-1]=float(line.split()[3])*0.514220632*2
+                                else:
+                                    print("Error in reading chi2 tensor. The ijk=%s %s %s are not integers" %(line.split()[0], line.split()[1], line.split()[2]))
+                                    print(isNumeric(line.split()[2]))
+                                    sys.exit(1)
+                            else:
+                                print("Error. The line %s contains less data then needed (3 integers followed by float value" % line)
+                                sys.exit(1)
+
+                        bornsum=[[0 for jj in range(3)] for ii in range(natom)]
+                        chi2sum=[[0 for jj in range(3)] for ii in range(3)]
+                        loterm=[[0 for jj in range(3)] for ii in range(natom)]
+#Caclculate 8 * pi *( sum chi(2)*ql)/sum{ ql epsilon_ll' ql'} which is a constant for all atoms and directions. This is a second order tensor
+# Calc sum{ ql epsilon_ll' ql'} first
+                        ratio=0
+                        for ll in range(3):
+                            for lll in range(3):
+                                ratio+=qvec[ll]*eps[ll][lll]*qvec[lll]
+                        if(ratio==0):
+                            print("Error while calculating Non-analytical intensity, the linear dielectric response is zero. Is q-vector given in proper way?")
+                            sys.exit(1)
+                        print("ratio is: %f" % ratio)
+                        for ii in range(3):
+                            for jj in range(3):
+                                for ll in range(3):
+                                    chi2sum[ii][jj]+=chi2[ii][jj][ll]*qvec[ll]
+                        print("Chi2sum:")
+
+                        for ii in range(3):
+                            print("%s" % "".join("% 12.9f " % chi2sum[ii][jj] for jj in range(3)))
+
+                        eigs=np.zeros(natom*3*natom*3).reshape(3*natom,natom,3)
+
+                        for m in range(natom*3):
+                            for k in range(natom):
+                                for b in range(3):
+                                    eigs[m][k][b]=eigvecs[k*3+b,m]
+
+                        for e in eigs:
+#                            print(e)
+                            norm=0
+                            for k in range(natom):
+                                for b in range(3):
+                                    norm+=e[k][b]**2
+#                            print('norm of eigen vector is: %f' % norm)
+
+# Now calc sum related to each atom in each direction
+                        for k in range(natom):
+                            for b in range(3):
+                                for ll in range(3):
+                                    bornsum[k][b]+=born[k][b][ll]*qvec[ll]*eigvecs[k*3+b,j]/sqrt(masses[k]*mau)
+
+
+
+                        print("Born Sum:")
+                        for k in range(natom):
+                            print(bornsum[k])
+# Finally calculate the non-analytical term (tensor with i and j indexes)
+                        for ii in range(3):
+                            for jj in range(3):
+                                sum=0
+                                for k in range(natom):
+                                    for b in range(3):
+                                        sum+=bornsum[k][b]
+                                loterm[ii][jj]=8*pi/cvol*sum*chi2sum[ii][jj]/ratio
+
+                        print("NLO term")
+                        for ii in range(3):
+                            print("%s" % "".join("% 12.9f " % loterm[ii][jj] for jj in range(3)))
+
+                    except (RuntimeError, TypeError, NameError) as e:
+                        print("Error reading data from Born file")
+                        print(e)
+
 
         # units (the same as in ABINIT DFPT method): sqrt(Bohr/amu) amu is Atomic mass unit (m_e=1)
                 alpha=(epsp-epsm)/(4*pi)*sqrt(cvol)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[j])*factorcm))*Angst2Bohr)*sqrt(9.10938356/1.6605402*10**-4)
                 out_fh.write('%4d  %9.5f ' % ((j+1),frequencies[j]*factorcm))
+
+#          Apply non-analytical term to the Raman intensity
+                if(args.born_fn):
+                    print("alpha w/o NLO term:")
+                    for i in range(3):
+                        print("%s" % "".join("% 12.9f " % alpha[i][j] for j in range(3)))
+                    print("alpha with NLO term:")
+
+                    for i in range(3):
+                        for j in range(3):
+                            alpha[i][j]-=loterm[i][j]
 
                 for i in range(3):
                     print (' '.join(' %10.7f' % a for a in  alpha[i]))
@@ -586,7 +718,7 @@ else:
                 gamma2=((alpha[0][0]-alpha[1][1])**2 + (alpha[1][1]-alpha[2][2])**2 +(alpha[2][2]-alpha[0][0])**2)/2
                 gamma2+=3*(alpha[0][1]**2+alpha[0][2]**2+alpha[1][2]**2)
 
-                out_fh.write("  % 9.7f  %9.7f  %9.7f  %9.7f  %9.7f\n" % ((Alpha**2),gamma2,  ((45*Alpha**2+4*gamma2)/45*args.mult), ((gamma2/15)*args.mult), (( gamma2/15 + (45*Alpha**2+4*gamma2)/45   )*args.mult) ))
+                out_fh.write("  % 9.7f  %9.7f  %9.7f  %9.7f  %9.7f\n" % (Alpha,gamma2,  ((45*Alpha**2+4*gamma2)/45*args.mult), ((gamma2/15)*args.mult), (( gamma2/15 + (45*Alpha**2+4*gamma2)/45   )*args.mult) ))
 
             except:
                 print("Failed to calculate data for mode %d" % (j+1))
@@ -596,3 +728,4 @@ else:
             print( "No data for mode %d in directory %s or %s" % ((j+1),abinitfnm,abinitfnp) )
 
 
+ 
