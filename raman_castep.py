@@ -58,35 +58,14 @@ def direct2cart(directpos,basis):
 def cart2direct(cart,basis):
     direct=[]
     for atcart in cart:
-        direct.append(np.dot(atcart,np.linalg.inv(np.transpose(basis))))
+        direct.append(np.dot(np.linalg.inv(np.transpose(basis)),atcart))
     return np.array(direct)
 
 
-def get_epsilon_dfpt(castep_fn):
-    e=[]
-    try:
-        fh = open(castep_fn, 'r')
-    except IOError:
-        print ("ERROR Couldn't open abinit output file %s, exiting...\n" % abinitfn)
-        sys.exit(1)
 
-    while True:
-        line=fh.readline()
-        if not line: break
-        if 'Dielectric tensor, in cartesian coordinates' in line:
-            while True:
-                sline=abinit_fh.readline()
-                if not sline: break
-                if 'Effective charges' in sline: break
-                if (re.match('\s*\d+\s*\d+',sline)):
-                    e.append(float(sline.split()[4]))
-            break
-    eps=np.array(e).reshape(3,3)
-    return eps
-
-def gencastep(fn,species,basis,cart,commentstr):
+def gencastep(fn,species,basis,cart, magmoms=None, commentstr=""):
     cell = Atoms(cell=basis, symbols=species, 
-            scaled_positions=cart2direct(cart,basis))
+            scaled_positions=cart2direct(cart,basis),magmoms=magmoms)
     try:
         write_castep(fn, cell)
     except:
@@ -123,6 +102,7 @@ def get_epsilon_dfpt(fn):
 
 ####### Extract permittivity from OPTIC #######
 def get_epsilon_optic(fn):
+# # Component            1
     try:
         fh = open(fn, 'r')
     except IOError:
@@ -140,12 +120,16 @@ def get_epsilon_optic(fn):
                 e[idx]=float(line.split()[1])
                 break
 
+#      6-components:   0  1  2  3  4  5 
+#                     xx yy zz xy xz yz
+#      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
     return(np.array([e[0],e[3],e[4],e[3],e[1],e[5],e[4],e[5],e[2]]))
 
 # CASTEP freq to cm-1 factor
 factorcm=521.47083
 
 Angst2Bohr=1.889725989
+#print sqrt(hbar/AMU/10e12)*10e10 #Angstrom
 basedirname='epsilon'
 
 
@@ -153,7 +137,10 @@ parser = argparse.ArgumentParser(description='The program is to calculate Raman 
 
 parser.add_argument("-i", "--input", action="store", type=str, dest="castep_fn", help="CASTEP input filename (.cell)")
 parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", help="Output filename")
+#parser.add_argument("-d", "--dynmat", action="store", type=str, dest="dynmat_fn", default='qpoints.yaml', help="Dynmat in yaml format filename")
 parser.add_argument("-f", action="store", type=str, dest="fsetfn", default='FORCE_SETS', help="Force_sets filename")
+parser.add_argument("--readfc", dest="read_force_constants", action="store_true",
+                                                    default=False, help="Read FORCE_CONSTANTS")
 parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='displ',
   help="Script modes. 'displ' -- generate input files; 'calcdfpt' -- calculate raman tensor (Epsilon calculated with DFPT method); calc --calculate raman tensor (optics method)")
 parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.1, help="Shift vector Delta")
@@ -164,12 +151,17 @@ args = parser.parse_args()
 if (args.castep_fn == None):
     print('Error. No input filename was given.')
     sys.exit(1)
-if (args.out_fn == None):
-    print('Error. No output filename was given.')
-    sys.exit(1)
 
 
-ph = phonopy.load(supercell_matrix=[1, 1, 1],
+if (args.read_force_constants):
+    print("Read force contants from FORCE_CONSTANTS file")
+    ph = phonopy.load(supercell_matrix=[1, 1, 1],
+                  primitive_matrix=[1, 0, 0, 0, 1, 0, 0, 0, 1],
+                  unitcell_filename=args.castep_fn,
+                  calculator='castep', factor=factorcm,
+                  force_constants_filename='FORCE_CONSTANTS')
+else:
+    ph = phonopy.load(supercell_matrix=[1, 1, 1],
                   primitive_matrix=[1, 0, 0, 0, 1, 0, 0, 0, 1],
                   unitcell_filename=args.castep_fn,
                   calculator='castep', factor=factorcm,
@@ -179,6 +171,9 @@ species=ph.primitive.get_chemical_symbols()
 masses=ph.primitive.get_masses()
 natom=ph.primitive.get_number_of_atoms()
 basis=ph.primitive.get_cell()
+magmoms=ph.primitive.get_magnetic_moments()
+print("primitive")
+print(ph.primitive.get_scaled_positions())
 cart=direct2cart(ph.primitive.get_scaled_positions(),basis)
 cvol=np.dot(basis[0],np.cross(basis[1],basis[2]))
 print(species)
@@ -191,11 +186,19 @@ eigvals, evecs = np.linalg.eigh(dmat)
 
 frequencies=np.sqrt(np.abs(eigvals.real)) * np.sign(eigvals) 
 for i in range(len(frequencies)):
-# Accoustic modes could be zero, shif frequency a little bit to exculde zero division
+# Accoustic modes could be zero, shif frequency a little bit
     if(abs(frequencies[i]*factorcm)<1):
         frequencies[i]=1/factorcm
 
 eigvecs=evecs.T
+
+#for i in range(len(frequencies)):
+#    print(frequencies[i]*factorcm)
+#    for j in range(len(species)):
+#        print("".join("% 9.7f " % (eigvecs[i][j*3+k]/sqrt(masses[j])) for k in range(3)))
+
+# GENERATION OF DISPLACEMENTS CASTEP INPUT FILES
+#j - mode number; i -atom number
 
 if (args.policy == 'displ'):
     for i in range(len(frequencies)):
@@ -224,12 +227,16 @@ if (args.policy == 'displ'):
             print ("%12.9f %12.9f %12.9f" % (cartat.tolist()[0], cartat.tolist()[1], cartat.tolist()[2]))
         fnm="shiftcell-%03d-1.cell" % (i+1)
         fnp="shiftcell-%03d+1.cell" % (i+1)
-        gencastep(fnm,species,basis,cartshiftdm,'freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta))
-        gencastep(fnp,species,basis,cartshiftdp,'freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta))
+        gencastep(fnm,species,basis,cartshiftdm, magmoms=magmoms, commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta))
+        gencastep(fnp,species,basis,cartshiftdp, magmoms=magmoms, commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta))
 
 ######################## Calculate RAMAN ###########################
 
 else:
+    if (args.out_fn == None):
+        print('Error. No output filename was given.')
+        sys.exit(1)
+
     try:
         out_fh = open(args.out_fn, 'w')
     except IOError:
@@ -243,6 +250,7 @@ else:
         G1=0
         fnm="%s-%03d-1" %(basedirname, (i+1))
         fnp="%s-%03d+1" %(basedirname, (i+1))
+#        print('mode number: %d; dirname %s; freq: %f' %((j+1),vasprunfnp,frequencies[natom*3-j-1]*args.freqfactor))
         if os.path.isfile(os.path.join(fnm,'shiftcell.castep')) and os.path.isfile(os.path.join(fnp,'shiftcell.castep')):
             try:
 ########################  DFPT  ###########################
@@ -269,6 +277,8 @@ else:
                 alpha=(epsm-epsp)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[i])*factorcm)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.mult
 
 # Calculate invariance in Long's notation
+#                     0    1    2    3    4    5    6    7    8
+#      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
                 Alpha=((alpha[0]+alpha[4]+alpha[8]))/3
                 Gamma2=( (alpha[0]-alpha[4])**2+(alpha[4]-alpha[8])**2+(alpha[8]-alpha[0])**2 )/2
                 Gamma2+=3*( (alpha[1])**2 + (alpha[2])**2 + (alpha[5])**2 )
@@ -283,6 +293,9 @@ else:
             except:
                 print('Filed to calculate raman for mode %d' % (i+1))
 
+    #        print ('\nItotal=%5.3f Iparal=%5.3f Iperp=%5.3f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
+    # Multiplyer for Intensity at room temperature with 514.5nm excitation line
+    #        print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
 
         else:
             print("No data for mode %d in directory %s or %s" % ((i+1),fnm,fnp))
