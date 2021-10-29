@@ -282,6 +282,16 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
             epsilon_m=np.zeros(9)
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'polar.out'))
+    elif(calculator=='cp2kv6'):
+        fnm="%s-%05d-1" %(basedirname, (modenum+1))
+        fnp="%s-%05d+1" %(basedirname, (modenum+1))
+        if os.path.isfile(os.path.join(fnm,'polar.out')) and os.path.isfile(os.path.join(fnp,'polar.out')):
+                epsilon_m=get_epsilon_cp2kv6(os.path.join(fnm,'polar.out'))/cvol*Angst2Bohr**3
+                epsilon_p=get_epsilon_cp2kv6(os.path.join(fnp,'polar.out'))/cvol*Angst2Bohr**3
+        else:
+            epsilon_m=np.zeros(9)
+            epsilon_p=np.zeros(9)
+            print('Outputfile %s does not exist!' % os.path.join(fnm,'polar.out'))
 
     return(epsilon_m,epsilon_p)
 
@@ -312,6 +322,28 @@ def get_epsilon_cp2k(fn):
         line=fh.readline()
         for j in range(3):
             epsilon[i*3+j]=float(line.split()[j+2])
+#    print(epsilon)
+
+    return(epsilon)
+
+def get_epsilon_cp2kv6(fn):
+    epsilon=np.zeros(9)
+    print('cp2kv6')
+    try:
+        fh = open(fn, 'r')
+    except IOError:
+        print("ERROR Couldn't open output file %s for reading" % fn)
+        return(-1)
+    for line in fh:
+        if ('POLARIZABILITY TENSOR (atomic units)' in line):
+            print(line)
+            break
+
+    for i in range(3):
+        line=fh.readline()
+        print(line)
+        for j in range(3):
+            epsilon[i*3+j]=float(line.split()[j+1])
 #    print(epsilon)
 
     return(epsilon)
@@ -347,13 +379,19 @@ basedirname='EPSILON'
 if(args.calc==None):
     print('Error. Calculator name is missed')
     sys.exit(1)
-
+calc=""
 if(args.calc=="castep"):
     factorcm=521.47083
+    calc='castep'
 elif(args.calc=="vasp"):
     factorcm=521.47083
+    calc='vasp'
 elif(args.calc=="cp2k"):
     factorcm=3739.4256800756
+    calc='cp2k'
+elif(args.calc=="cp2kv6"):
+    factorcm=3739.4256800756
+    calc='cp2k'
 else:
     print('Wrong calculator name %s' % args.calc)
     sys.exit(1)
@@ -363,13 +401,13 @@ if (args.read_force_constants):
     ph = phonopy.load(supercell_matrix=[1, 1, 1],
                   primitive_matrix=[1, 0, 0, 0, 1, 0, 0, 0, 1],
                   unitcell_filename=args.str_fn,
-                  calculator=args.calc, factor=factorcm,
+                  calculator=calc, factor=factorcm,
                   force_constants_filename='FORCE_CONSTANTS')
 else:
     ph = phonopy.load(supercell_matrix=[1, 1, 1],
                   primitive_matrix=[1, 0, 0, 0, 1, 0, 0, 0, 1],
                   unitcell_filename=args.str_fn,
-                  calculator=args.calc, factor=factorcm,
+                  calculator=calc, factor=factorcm,
                   force_sets_filename=args.fsetfn)
 
 species=ph.primitive.get_chemical_symbols()
