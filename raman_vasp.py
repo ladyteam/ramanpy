@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # This program is free software: you can redistribute it and/or modify
@@ -124,7 +124,7 @@ def get_epsilon_optics(outcarfn,freq):
     try:
         outcar_fh = open(outcarfn, 'r')
     except IOError:
-        print "ERROR Couldn't open OUTCAR file, skip...\n"
+        print("ERROR Couldn't open OUTCAR file, skip...")
     while True:
         line=outcar_fh.readline()
         if not line:
@@ -328,7 +328,7 @@ args = parser.parse_args()
 try:
     qpoints_fh = open(args.dynmat_fn, 'r')
 except IOError:
-    print "ERROR Couldn't open qpoints file, exiting...\n"
+    print("ERROR Couldn't open qpoints file, exiting...")
     sys.exit(1)
 
 natom=0
@@ -531,5 +531,5 @@ else:
     #        print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
 
         else:
-            print "No data for mode %d in directory %s or %s" % ((j+1),vasprunfnm,vasprunfnp) 
+            print("No data for mode %d in directory %s or %s" % ((j+1),vasprunfnm,vasprunfnp))
 
