@@ -73,7 +73,10 @@ def cart2direct(cart,basis):
         direct.append(np.dot(np.linalg.inv(np.transpose(basis)),atcart))
     return np.array(direct)
 
-
+def _iterparse(fname, tag=None):
+    for event, elem in etree.iterparse(fname):
+            if tag is None or elem.tag == tag:
+                        yield event, elem
 
 def gencastep(fn,species,basis,cart, magmoms=None, commentstr=""):
     cell = Atoms(cell=basis, symbols=species, 
@@ -201,7 +204,7 @@ def get_epsilon_dfpt_vasp(vasprunfn):
                                     eps.append([float(vec) for vec in vectors.text.split()])
     except:
         print ('Error reading xml file %s', vasprunfnm)
-    return(np.array(eps))
+    return(np.array(eps).flatten())
 
 def get_epsilon_dfpt(basedirname,modenum,calculator):
     if(calculator=='vasp'):
@@ -211,7 +214,7 @@ def get_epsilon_dfpt(basedirname,modenum,calculator):
             try:
                 epsilon_m=get_epsilon_dfpt_vasp(os.path.join(fnm,'vasprun.xml'))
                 epsilon_p=get_epsilon_dfpt_vasp(os.path.join(fnp,'vasprun.xml'))
-                print('Epsilon is: ', epsilon_m,epsilon_p)
+#                print('Epsilon is: ', epsilon_m,epsilon_p)
             except:
                 epsilon_m=np.zeros(9)
                 epsilon_p=np.zeros(9)
@@ -233,7 +236,7 @@ def get_epsilon_dfpt(basedirname,modenum,calculator):
             epsilon_m=np.zeros(9)
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'shiftcell.castep'))
-
+#    print('Epsilon is: ', epsilon_m,epsilon_p)
     return(epsilon_m,epsilon_p)
 
 #epsm = get_epsilon_optic(os.path.join(fnm,'shiftcell_epsilon.dat'))
@@ -514,36 +517,32 @@ else:
 ########################  DFPT  ###########################
         if (args.policy == 'calcdfpt'):
             epsm, epsp = get_epsilon_dfpt(basedirname,i,args.calc)
-            if(np.linalg.norm(epsm)==0):
-                print('Warning dielectic tensor (dist minus) is zero')
-            if(np.linalg.norm(epsp)==0):
-                print('Warning dielectic tensor (dist plus) is zero')
 ########################  OPTIC  ###########################
         else:
             epsm, epsp = get_epsilon_optics(basedirname,i,args.calc,freq=args.epsfreq,cvol=cvol)
 
-            if (np.linalg.norm(epsp)==0 or np.linalg.norm(epsm)==0):
-                print ('Epsilon data damaged in for mode %d. Norm is zero' % (i+1))
-                continue
-            print('Got epsilon values difference:')
+        if (np.linalg.norm(epsp)==0 or np.linalg.norm(epsm)==0):
+            print ('Epsilon data damaged in for mode %d. Norm is zero' % (i+1))
+            continue
+        print('Got epsilon values difference:')
 
 # Atomic units: sqrt(Bohr/amu) (me=1, e=1,hbar=1)
-            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[i])*factorcm)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.mult
+        alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[i])*factorcm)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.mult
 
 # Calculate invariance in Long's notation
 #                     0    1    2    3    4    5    6    7    8
 #      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
-            Alpha=((alpha[0]+alpha[4]+alpha[8]))/3
-            Gamma2=( (alpha[0]-alpha[4])**2+(alpha[4]-alpha[8])**2+(alpha[8]-alpha[0])**2 )/2
-            Gamma2+=3*( (alpha[1])**2 + (alpha[2])**2 + (alpha[5])**2 )
+        Alpha=((alpha[0]+alpha[4]+alpha[8]))/3
+        Gamma2=( (alpha[0]-alpha[4])**2+(alpha[4]-alpha[8])**2+(alpha[8]-alpha[0])**2 )/2
+        Gamma2+=3*( (alpha[1])**2 + (alpha[2])**2 + (alpha[5])**2 )
 
-            Iperp=Gamma2/15
-            Ipar=( 45*Alpha**2 + 4*Gamma2 )/45
-            print('%4d\t%8.2f\t%12.8f\t%12.8f\t%12.8f' % ((i+1), frequencies[i]*factorcm,Ipar,Iperp,(Ipar+Iperp)))
+        Iperp=Gamma2/15
+        Ipar=( 45*Alpha**2 + 4*Gamma2 )/45
+        print('%4d\t%8.2f\t%12.8f\t%12.8f\t%12.8f' % ((i+1), frequencies[i]*factorcm,Ipar,Iperp,(Ipar+Iperp)))
 
-            out_fh.write('%4d  %8.2f  ' % ((i+1), frequencies[i]*factorcm))
-            out_fh.write(' '.join(" %9.6f" % alpha[i] for i in range(9)))
-            out_fh.write('  % 12.10f % 12.10f % 12.10f % 12.10f % 12.10f\n' % (Alpha**2,Gamma2,Ipar,Iperp,(Ipar+Iperp)))
+        out_fh.write('%4d  %8.2f  ' % ((i+1), frequencies[i]*factorcm))
+        out_fh.write(' '.join(" %9.6f" % alpha[i] for i in range(9)))
+        out_fh.write('  % 12.10f % 12.10f % 12.10f % 12.10f % 12.10f\n' % (Alpha**2,Gamma2,Ipar,Iperp,(Ipar+Iperp)))
 
     #        print ('\nItotal=%5.3f Iparal=%5.3f Iperp=%5.3f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
     # Multiplyer for Intensity at room temperature with 514.5nm excitation line
