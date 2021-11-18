@@ -21,26 +21,19 @@
 #
 # Author: Eugene Roginskii
 
-import h5py
-import matplotlib.pyplot as plt 
 import phonopy
 from phonopy.interface.castep import write_castep
 from phonopy.interface.vasp import write_vasp
+from phonopy.interface.abinit import write_abinit
 from phonopy.structure.atoms import PhonopyAtoms as Atoms
-#from phonopy.phonon.band_structure import get_band_qpoints_and_path_connections
-#from phonopy.phonon.band_structure import get_band_structure_dict
 import argparse
-import matplotlib
 import numpy as np
 import sys
 from math import sqrt
 import re
 from math import (
         sqrt, pi, exp)
-from shutil import move
 import os
-import datetime
-import time
 import xml.etree.cElementTree as etree
 
 
@@ -140,7 +133,7 @@ def get_epsilon_optic_castep(fn):
 #      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
     return(np.array([e[0],e[3],e[4],e[3],e[1],e[5],e[4],e[5],e[2]]))
 
-def genposcar(fn,modenum,freq,basis,species,cart):
+def genposcar(fn,modenum,freq,basis,species,cart,ir=''):
     cell = Atoms(cell=basis, symbols=species, 
             scaled_positions=cart2direct(cart,basis))
     try:
@@ -151,7 +144,7 @@ def genposcar(fn,modenum,freq,basis,species,cart):
         with open(fn,"r") as fh:
             lines = fh.readlines() #read
         with open(fn, "w") as fh:
-            fh.write('%s\n' % 'Epsilon calculation for %d mode, %f cm-1' % (modenum,freq))
+            fh.write('%s\n' % 'Epsilon calculation for %d mode, %f cm-1 IR: %s' % (modenum,freq,ir))
             for i in range(1,len(lines)):
                 fh.writelines("%s" % lines[i]) #write back
     except IOError:
@@ -237,6 +230,20 @@ def get_epsilon_dfpt(basedirname,modenum,calculator):
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'shiftcell.castep'))
 #    print('Epsilon is: ', epsilon_m,epsilon_p)
+    elif(calculator=='abinit'):
+        fnm="%s-%03d-1" %(basedirname, (modenum+1))
+        fnp="%s-%03d+1" %(basedirname, (modenum+1))
+        if os.path.isfile(os.path.join(fnm,'shiftcell.abo')) and os.path.isfile(os.path.join(fnp,'shiftcell.abo')):
+            try:
+                epsilon_m=get_epsilon_abinit(os.path.join(fnm,'shiftcell.abo'))
+                epsilon_p=get_epsilon_abinit(os.path.join(fnp,'shiftcell.abo'))
+            except:
+                epsilon_m=np.zeros(9)
+                epsilon_p=np.zeros(9)
+        else:
+            epsilon_m=np.zeros(9)
+            epsilon_p=np.zeros(9)
+            print('Outputfile %s does not exist!' % os.path.join(fnm,'shiftcell.abo'))
     return(epsilon_m,epsilon_p)
 
 #epsm = get_epsilon_optic(os.path.join(fnm,'shiftcell_epsilon.dat'))
@@ -351,19 +358,58 @@ def get_epsilon_cp2kv6(fn):
 
     return(epsilon)
 
+def genabinit(fn,modenum,freq,basis,species,cart,ir=''):
+    cell = Atoms(cell=basis, symbols=species, 
+            scaled_positions=cart2direct(cart,basis))
+    try:
+        write_abinit(fn, cell)
+    except:
+        print('Error writing file %s' % fn)
+    try:
+        with open(fn,"r") as fh:
+            lines = fh.readlines() #read
+        with open(fn, "w") as fh:
+            fh.write('#%s\n' % 'Epsilon calculation for %d mode, %f cm-1 IR %s' % (modenum,freq,ir))
+            for i in range(len(lines)):
+                fh.writelines("%s" % lines[i]) #write back
+    except IOError:
+        print("ERROR adding comment to output file %s" % fn)
+        sys.exit(1)
+
+def get_epsilon_abinit(fn):
+    e=[]
+    try:
+        abinit_fh = open(fn, 'r')
+    except IOError:
+        print ("ERROR Couldn't open abinit output file %s, exiting...\n" % abinitfn)
+        sys.exit(1)
+
+    while True:
+        line=abinit_fh.readline()
+        if not line: break
+        if 'Dielectric tensor, in cartesian coordinates' in line:
+            while True:
+                sline=abinit_fh.readline()
+                if not sline: break
+                if 'Effective charges' in sline: break
+                if (re.match('\s*\d+\s*\d+',sline)):
+                    e.append(float(sline.split()[4]))
+            break
+    return(np.array(e))
+
 Angst2Bohr=1.889725989
 #print sqrt(hbar/AMU/10e12)*10e10 #Angstrom
 
-parser = argparse.ArgumentParser(description='The program is to calculate Raman tensor with finite displacements method with VASP/CASTEP/CP2K code')
+parser = argparse.ArgumentParser(description='The program is to calculate Raman tensor with finite displacements method with VASP/CASTEP/CP2K/ABINIT code')
 
-parser.add_argument("-i", "--input", action="store", type=str, dest="str_fn", help="Input filename with structure (POSCAR/castep.cell/input.inp)")
+parser.add_argument("-i", "--input", action="store", type=str, dest="str_fn", help="Input filename with structure (POSCAR/castep.cell/input.inp/input.abi)")
 parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", help="Output filename")
 #parser.add_argument("-d", "--dynmat", action="store", type=str, dest="dynmat_fn", default='qpoints.yaml', help="Dynmat in yaml format filename")
 parser.add_argument("-f", action="store", type=str, dest="fsetfn", default='FORCE_SETS', help="Force_sets filename")
 parser.add_argument("--readfc", dest="read_force_constants", action="store_true",
                                                     default=False, help="Read FORCE_CONSTANTS")
 parser.add_argument("--calc", dest="calc", action="store",
-                                                    help="Calculator vasp/castep/cp2k")
+                                                    help="Calculator vasp/castep/cp2k/ABINIT")
 parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='displ',
   help="Script modes. 'displ' -- generate input files; 'calcdfpt' -- calculate raman tensor (Epsilon calculated with DFPT method); calc --calculate raman tensor (optics/linear response method)")
 parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.1, help="Shift vector Delta")
@@ -395,6 +441,9 @@ elif(args.calc=="cp2k"):
 elif(args.calc=="cp2kv6"):
     factorcm=3739.4256800756
     calc='cp2k'
+elif(args.calc=="abinit"):
+    factorcm=716.85192105135115965589
+    calc='abinit'
 else:
     print('Wrong calculator name %s' % args.calc)
     sys.exit(1)
@@ -417,7 +466,6 @@ species=ph.primitive.get_chemical_symbols()
 masses=ph.primitive.get_masses()
 natom=ph.primitive.get_number_of_atoms()
 basis=ph.primitive.get_cell()
-print('basis is: ', basis)
 if(args.calc=='castep'):
     magmoms=ph.primitive.get_magnetic_moments()
 print("primitive")
@@ -428,6 +476,8 @@ print(species)
 print(cart)
 print(cart2direct(cart,basis))
 print(basis)
+ph.set_irreps([0.0,0.0,0.0])
+ir_labels=ph.get_irreps()._ir_labels
 
 dmat = ph.get_dynamical_matrix_at_q([0,0,0])
 eigvals, evecs = np.linalg.eigh(dmat)
@@ -483,13 +533,19 @@ if (args.policy == 'displ'):
         elif(args.calc=='vasp'):
             poscarfnm="POSCAR-%03d-1" % (i+1)
             poscarfnp="POSCAR-%03d+1" % (i+1)
-            genposcar(poscarfnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm)
-            genposcar(poscarfnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp)
-        elif(args.calc=='cp2k'):
+            genposcar(poscarfnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm,ir=ir_labels[i])
+            genposcar(poscarfnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp,ir=ir_labels[i])
+#Hack to support cp2k v6
+        elif(calc=='cp2k'):
             poscarfnm="shiftcell-%05d-1.xyz" % (i+1)
             poscarfnp="shiftcell-%05d+1.xyz" % (i+1)
             genxyz(poscarfnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm)
             genxyz(poscarfnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp)
+        elif(args.calc=='abinit'):
+            fnm="shiftcell-%03d-1.abi" % (i+1)
+            fnp="shiftcell-%03d+1.abi" % (i+1)
+            genabinit(fnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm,ir=ir_labels[i])
+            genabinit(fnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp,ir=ir_labels[i])
     if(args.calc=='cp2k'):
         print('A B C for input file is:')
         print('A %s' % "".join("%14.9f" % b for b in basis[0]))
@@ -527,8 +583,10 @@ else:
         print('Got epsilon values difference:')
 
 # Atomic units: sqrt(Bohr/amu) (me=1, e=1,hbar=1)
-        alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[i])*factorcm)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.mult
-
+        if (args.calc=='abinit'):
+            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[i])*factorcm)))*sqrt(Angst2Bohr**2*9.10938356/1.6605402*10**-4)*args.mult
+        else:
+            alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)/(2*args.delta*18.362*sqrt(1/(abs(frequencies[i])*factorcm)))*sqrt(Angst2Bohr*9.10938356/1.6605402*10**-4)*args.mult
 # Calculate invariance in Long's notation
 #                     0    1    2    3    4    5    6    7    8
 #      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
@@ -550,3 +608,4 @@ else:
 
 
     out_fh.close()
+    
