@@ -292,6 +292,20 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
             epsilon_m=np.zeros(9)
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'polar.out'))
+    elif(calculator=='crystal'):
+        fnm="%s-%05d-1" %(basedirname, (modenum+1))
+        fnp="%s-%05d+1" %(basedirname, (modenum+1))
+        if os.path.isfile(os.path.join(fnm,"".join('%s.out' %fnm))) and os.path.isfile(os.path.join(fnp,"".join('%s.out' %fnp))):
+            try:
+                epsilon_m=get_epsilon_crystal(os.path.join(fnm,"".join('%s.out' %fnm)))/cvol*Angst2Bohr**3
+                epsilon_p=get_epsilon_crystal(os.path.join(fnp,"".join('%s.out' %fnp)))/cvol*Angst2Bohr**3
+            except:
+                epsilon_m=np.zeros(9)
+                epsilon_p=np.zeros(9)
+        else:
+            epsilon_m=np.zeros(9)
+            epsilon_p=np.zeros(9)
+            print('Outputfile %s does not exist!' % os.path.join(fnm,'polar.out'))
     elif(calculator=='cp2kv6'):
         fnm="%s-%05d-1" %(basedirname, (modenum+1))
         fnp="%s-%05d+1" %(basedirname, (modenum+1))
@@ -317,6 +331,25 @@ def genxyz(fn,modenum,freq,basis,species,cart):
     for i in range(len(species)):
         fh.write("%s  %s\n" % (species[i],
                              "".join("    % 15.10f" % c for c in cart[i])))
+
+def gengui(fn,modenum,freq,basis,numbers,cart,ir=''):
+    print("Generating file %s" % fn)
+    try:
+        fh = open(fn, 'w')
+    except IOError:
+        print("ERROR Couldn't open output file %s for writing" % fn)
+        return(-1)
+    fh.write(' 3 1 3 %s\n' % 'Epsilon calculation for %d mode, %f cm-1 IR: %s' % (modenum,freq,ir))
+    for i in range(3):
+        fh.write('%s\n' % "".join("%12.9f " % b for b in basis[i]))
+    fh.write(" 1\n 1.0000000 0.0000000 0.0000000\n")
+    fh.write(" 0.0000000 1.0000000 0.0000000\n")
+    fh.write(" 0.0000000 0.0000000 1.0000000\n")
+    fh.write(" 0.0000000 0.0000000 0.0000000\n")
+    fh.write(" %d\n" % len(numbers))
+    for i in range(len(numbers)):
+        fh.write("%d  %s\n" % (numbers[i],
+                             "".join("    % 15.10f" % c for c in cart[i])))
 def get_epsilon_cp2k(fn):
     epsilon=np.zeros(9)
     try:
@@ -327,11 +360,33 @@ def get_epsilon_cp2k(fn):
     for line in fh:
         if ('Polarizability tensor [a.u.]' in line):
             break
-
+# Components sequence in CP2K output
+# xx,yy,zz
+# xy,xz,yz
+# yx,zx,zy
+# Components sequence in epsilon array:
+#                     0    1    2    3    4    5    6    7    8
+#      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
+    line=fh.readline()
     for i in range(3):
-        line=fh.readline()
-        for j in range(3):
-            epsilon[i*3+j]=float(line.split()[j+2])
+        epsilon[i*4]=float(line.split()[i+2])
+
+    line=fh.readline()
+    for i in range(2):
+        epsilon[1+i]=float(line.split()[i+2])
+    epsilon[5]=float(line.split()[4])
+
+    line=fh.readline()
+    epsilon[3]=float(line.split()[2])
+    for i in range(2):
+        epsilon[6+i]=float(line.split()[i+3])   
+# Symmitrize
+    epsilon[1]=(epsilon[1]+epsilon[3])/2
+    epsilon[3]=epsilon[1]
+    epsilon[2]=(epsilon[2]+epsilon[6])/2
+    epsilon[6]=epsilon[2]
+    epsilon[5]=(epsilon[5]+epsilon[7])/2
+    epsilon[7]=epsilon[5]
 #    print(epsilon)
 
     return(epsilon)
@@ -349,15 +404,71 @@ def get_epsilon_cp2kv6(fn):
             print(line)
             break
 
+    line=fh.readline()
     for i in range(3):
-        line=fh.readline()
-        print(line)
-        for j in range(3):
-            epsilon[i*3+j]=float(line.split()[j+1])
+        epsilon[i*4]=float(line.split()[i+1])
+
+    line=fh.readline()
+    for i in range(2):
+        epsilon[1+i]=float(line.split()[i+1])
+    epsilon[5]=float(line.split()[3])
+
+    line=fh.readline()
+    epsilon[3]=float(line.split()[1])
+    for i in range(2):
+        epsilon[6+i]=float(line.split()[i+2])   
+# Symmitrize
+    epsilon[1]=(epsilon[1]+epsilon[3])/2
+    epsilon[3]=epsilon[1]
+    epsilon[2]=(epsilon[2]+epsilon[6])/2
+    epsilon[6]=epsilon[2]
+    epsilon[5]=(epsilon[5]+epsilon[7])/2
+    epsilon[7]=epsilon[5]
 #    print(epsilon)
 
     return(epsilon)
 
+def get_epsilon_crystal(fn):
+    epsilon=np.zeros(9)
+    try:
+        fh = open(fn, 'r')
+    except IOError:
+        print("ERROR Couldn't open output file %s for reading" % fn)
+        return(-1)
+    for line in fh:
+        if ('SUSCEPTIBILITY (CHI(1)) TENSORS' in line):
+            break
+    for line in fh:
+        if ('ALPHA(REAL,' in line):
+            break
+# Components sequence in Crystal output
+# COMPONENT    ALPHA(REAL, IMAGINARY)         EPSILON       CHI(1) 
+#  XX      602.1108        0.0000        7.9693        6.9693    
+#  XY       -0.0000        0.0000       -0.0000       -0.0000    
+#  XZ       -0.0000        0.0000       -0.0000       -0.0000    
+#  YY      564.6560        0.0000        7.5358        6.5358    
+#  YZ        0.0000        0.0000        0.0000        0.0000    
+#  ZZ      375.7785        0.0000        5.3496        4.3496    
+# Components sequence in epsilon array:
+#                     0    1    2    3    4    5    6    7    8
+#      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
+
+    for i in range(3):
+        line=fh.readline()
+        epsilon[i]=float(line.split()[1])
+    epsilon[3]=epsilon[1]
+    epsilon[6]=epsilon[2]
+    line=fh.readline()
+    epsilon[4]=float(line.split()[1])
+    line=fh.readline()
+    epsilon[5]=float(line.split()[1])
+    epsilon[7]=epsilon[5]
+    line=fh.readline()
+    epsilon[8]=float(line.split()[1])
+
+#    print(epsilon)
+
+    return(epsilon)
 def genabinit(fn,modenum,freq,basis,species,cart,ir=''):
     cell = Atoms(cell=basis, symbols=species, 
             scaled_positions=cart2direct(cart,basis))
@@ -400,7 +511,7 @@ def get_epsilon_abinit(fn):
 Angst2Bohr=1.889725989
 #print sqrt(hbar/AMU/10e12)*10e10 #Angstrom
 
-parser = argparse.ArgumentParser(description='The program is to calculate Raman tensor with finite displacements method with VASP/CASTEP/CP2K/ABINIT code')
+parser = argparse.ArgumentParser(description='The program is to calculate Raman tensor with finite displacements method with VASP/CASTEP/CP2K/ABINIT/CRYSTAL code')
 
 parser.add_argument("-i", "--input", action="store", type=str, dest="str_fn", help="Input filename with structure (POSCAR/castep.cell/input.inp/input.abi)")
 parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", help="Output filename")
@@ -408,13 +519,16 @@ parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", h
 parser.add_argument("-f", action="store", type=str, dest="fsetfn", default='FORCE_SETS', help="Force_sets filename")
 parser.add_argument("--readfc", dest="read_force_constants", action="store_true",
                                                     default=False, help="Read FORCE_CONSTANTS")
-parser.add_argument("--calc", dest="calc", action="store",
-                                                    help="Calculator vasp/castep/cp2k/ABINIT")
+parser.add_argument("--soft", dest="calc", action="store",
+                                                    help="Calculator software vasp/castep/cp2k/ABINIT/crystal")
 parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='displ',
   help="Script modes. 'displ' -- generate input files; 'calcdfpt' -- calculate raman tensor (Epsilon calculated with DFPT method); calc --calculate raman tensor (optics/linear response method)")
 parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.1, help="Shift vector Delta")
 parser.add_argument("-m", "--mult", action="store", type=float, dest="mult", default=1.0, help="Intensity multiplier")
 parser.add_argument("--freq", action="store", type=float, dest="epsfreq", default=0.0, help="Frequency for epsilon delta. Default 0")
+parser.add_argument("--ireps", dest="irreps", action="store_true",
+                                                    default=False, help="Find Irreducible representations and print in input files")
+
 
 args = parser.parse_args()
 
@@ -444,6 +558,9 @@ elif(args.calc=="cp2kv6"):
 elif(args.calc=="abinit"):
     factorcm=716.85192105135115965589
     calc='abinit'
+elif(args.calc=="crystal"):
+    factorcm=521.47083
+    calc='crystal'
 else:
     print('Wrong calculator name %s' % args.calc)
     sys.exit(1)
@@ -463,6 +580,7 @@ else:
                   force_sets_filename=args.fsetfn)
 
 species=ph.primitive.get_chemical_symbols()
+numbers=ph.primitive.get_atomic_numbers()
 masses=ph.primitive.get_masses()
 natom=ph.primitive.get_number_of_atoms()
 basis=ph.primitive.get_cell()
@@ -473,11 +591,15 @@ print(ph.primitive.get_scaled_positions())
 cart=direct2cart(ph.primitive.get_scaled_positions(),basis)
 cvol=np.dot(basis[0],np.cross(basis[1],basis[2]))
 print(species)
+print(numbers)
 print(cart)
 print(cart2direct(cart,basis))
 print(basis)
 ph.set_irreps([0.0,0.0,0.0])
-ir_labels=ph.get_irreps()._ir_labels
+if (args.irreps):
+    ir_labels=ph.get_irreps()._ir_labels
+else:
+    ir_labels=''
 
 dmat = ph.get_dynamical_matrix_at_q([0,0,0])
 eigvals, evecs = np.linalg.eigh(dmat)
@@ -546,6 +668,11 @@ if (args.policy == 'displ'):
             fnp="shiftcell-%03d+1.abi" % (i+1)
             genabinit(fnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm,ir=ir_labels[i])
             genabinit(fnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp,ir=ir_labels[i])
+        elif(calc=='crystal'):
+            fnm="shiftcell-%05d-1.gui" % (i+1)
+            fnp="shiftcell-%05d+1.gui" % (i+1)
+            gengui(fnm,i+1,frequencies[i]*factorcm,basis,numbers,cartshiftdm,ir=ir_labels[i])
+            gengui(fnp,i+1,frequencies[i]*factorcm,basis,numbers,cartshiftdp,ir=ir_labels[i])
     if(args.calc=='cp2k'):
         print('A B C for input file is:')
         print('A %s' % "".join("%14.9f" % b for b in basis[0]))
