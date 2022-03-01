@@ -15,7 +15,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # The raman tensor calculation based on finite displacement method
-# DOI: 
+# Please cite the following paper:
+# DOI: 10.1021/acs.jpcc.5b05540
 #
 # The code is based on PHONOPY API https://phonopy.github.io/phonopy/
 #
@@ -71,7 +72,7 @@ def _iterparse(fname, tag=None):
             if tag is None or elem.tag == tag:
                         yield event, elem
 
-def gencastep(fn,species,basis,cart, magmoms=None, commentstr=""):
+def gencastep(fn,species,basis,cart, magmoms=None, commentstr='', ir=''):
     cell = Atoms(cell=basis, symbols=species, 
             scaled_positions=cart2direct(cart,basis),magmoms=magmoms)
     try:
@@ -82,7 +83,7 @@ def gencastep(fn,species,basis,cart, magmoms=None, commentstr=""):
         with open(fn,"r") as fh:
             lines = fh.readlines() #read
         with open(fn, "w") as fh:
-            fh.write('#%s\n' % commentstr)
+            fh.write('#%s; IR: %s\n' % (commentstr,ir))
             fh.writelines(lines) #write back
     except IOError:
         print("ERROR adding comment to output file %s" % fn)
@@ -519,14 +520,14 @@ parser.add_argument("-o", "--output", action="store", type=str, dest="out_fn", h
 parser.add_argument("-f", action="store", type=str, dest="fsetfn", default='FORCE_SETS', help="Force_sets filename")
 parser.add_argument("--readfc", dest="read_force_constants", action="store_true",
                                                     default=False, help="Read FORCE_CONSTANTS")
-parser.add_argument("--soft", dest="calc", action="store",
+parser.add_argument("-s", "--soft", dest="calc", action="store",
                                                     help="Calculator software vasp/castep/cp2k/ABINIT/crystal")
 parser.add_argument("-p", "--policy", action="store", type=str, dest="policy", default='displ',
   help="Script modes. 'displ' -- generate input files; 'calcdfpt' -- calculate raman tensor (Epsilon calculated with DFPT method); calc --calculate raman tensor (optics/linear response method)")
 parser.add_argument("-D", "--delta", action="store", type=float, dest="delta", default=0.1, help="Shift vector Delta")
 parser.add_argument("-m", "--mult", action="store", type=float, dest="mult", default=1.0, help="Intensity multiplier")
 parser.add_argument("--freq", action="store", type=float, dest="epsfreq", default=0.0, help="Frequency for epsilon delta. Default 0")
-parser.add_argument("--ireps", dest="irreps", action="store_true",
+parser.add_argument("--irreps", dest="irreps", action="store_true",
                                                     default=False, help="Find Irreducible representations and print in input files")
 
 
@@ -595,11 +596,27 @@ print(numbers)
 print(cart)
 print(cart2direct(cart,basis))
 print(basis)
-ph.set_irreps([0.0,0.0,0.0])
+
 if (args.irreps):
-    ir_labels=ph.get_irreps()._ir_labels
+# Hack to do irrep analysis. Spin order will be restored later
+    ph.primitive.set_magnetic_moments(None)
+# Set IR for Gamma point
+    ph.set_irreps([0.0,0.0,0.0])
+    ir_labels=[]
+    for ir in ph.get_irreps()._ir_labels:
+        if ('T' in ir):
+            for i in range(3):
+                ir_labels.append(ir)
+            continue
+        elif  ('E' in ir):
+            for i in range(2):
+                ir_labels.append(ir)
+            continue
+        else:
+            ir_labels.append(ir)
+    print(ir_labels)
 else:
-    ir_labels=''
+    ir_labels=["" for x in range(natom*3)]
 
 dmat = ph.get_dynamical_matrix_at_q([0,0,0])
 eigvals, evecs = np.linalg.eigh(dmat)
@@ -649,9 +666,9 @@ if (args.policy == 'displ'):
             fnm="shiftcell-%03d-1.cell" % (i+1)
             fnp="shiftcell-%03d+1.cell" % (i+1)
             gencastep(fnm,species,basis,cartshiftdm, magmoms=magmoms, 
-                    commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta))
+                    commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta),ir=ir_labels[i])
             gencastep(fnp,species,basis,cartshiftdp, magmoms=magmoms, 
-                    commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta))
+                    commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta),ir=ir_labels[i])
         elif(args.calc=='vasp'):
             poscarfnm="POSCAR-%03d-1" % (i+1)
             poscarfnp="POSCAR-%03d+1" % (i+1)
