@@ -603,8 +603,11 @@ if (args.irreps):
 # Set IR for Gamma point
     ph.set_irreps([0.0,0.0,0.0])
     ir_labels=[]
+    print(ph.get_irreps()._ir_labels)
     for ir in ph.get_irreps()._ir_labels:
-        if ('T' in ir):
+        if ( ir is None):
+            ir_labels.append('None')
+        elif ('T' in ir):
             for i in range(3):
                 ir_labels.append(ir)
             continue
