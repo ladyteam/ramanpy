@@ -23,6 +23,7 @@
 # Author: Eugene Roginskii
 
 import phonopy
+import spglib
 from phonopy.interface.castep import write_castep
 from phonopy.interface.vasp import write_vasp
 from phonopy.interface.abinit import write_abinit
@@ -36,7 +37,7 @@ from math import (
         sqrt, pi, exp)
 import os
 import xml.etree.cElementTree as etree
-
+from copy import deepcopy
 
 def strType(var):
     try:
@@ -55,16 +56,16 @@ def chunks(l, n):
     return [l[i:i + n] for i in range(0, len(l), n)]
 
 
-def direct2cart(directpos,basis):
+def direct2cart(directpos, basis):
     cart=[]
     for atdirect in directpos:
-        cart.append(np.dot(np.transpose(basis),atdirect))
+        cart.append(np.dot(np.transpose(basis), atdirect))
     return np.array(cart)
 
-def cart2direct(cart,basis):
+def cart2direct(cart, basis):
     direct=[]
     for atcart in cart:
-        direct.append(np.dot(np.linalg.inv(np.transpose(basis)),atcart))
+        direct.append(np.dot(np.linalg.inv(np.transpose(basis)), atcart))
     return np.array(direct)
 
 def _iterparse(fname, tag=None):
@@ -72,7 +73,73 @@ def _iterparse(fname, tag=None):
             if tag is None or elem.tag == tag:
                         yield event, elem
 
-def gencastep(fn,species,basis,cart, magmoms=None, commentstr='', ir=''):
+def expand_mat2d(chid, na, basis, spgclass, direction):
+    from phonopy.harmonic.force_constants import similarity_transformation
+
+    if(spgclass == 'tetragonal'):
+      if(direction == [1, -1, 1]):
+# Rotate C4 + mirror_z
+        rotation = np.array([0, 1,  0,  1, 0, 0, 0, 0, -1]).reshape(3, 3)
+        for k in range(3):
+#        print('rotc')
+#        print(rotc)
+          if(direction[k] < 0):
+            rotc = similarity_transformation(basis.transpose(), rotation)
+            chid[na][k] = similarity_transformation(rotc, 
+                                                    chid[na][-1*direction[k] - 1])
+    elif(spgclass == 'hexagonal'):
+      print(spgclass)
+      if(direction == [1, -1, 1]):
+# Rotate C4 + mirror_z
+        rotation = np.array([-1, 0,  0,  1, 1, 0, 0, 0, 1]).reshape(3, 3)
+        for k in range(3):
+#        print('rotc')
+#        print(rotc)
+          if(direction[k] < 0):
+            rotc = similarity_transformation(basis.transpose(), rotation)
+            print(rotc)
+            chid[na][k] = similarity_transformation(rotc, 
+                                                    chid[na][-1*direction[k] - 1])
+
+      else:
+        print('Not implemented yet use option --alldir')
+
+    else:
+        print('Not implemented yet use option --alldir')
+
+def expand_chid(chid, primitive, prim_symmetry):
+    from phonopy.harmonic.force_constants import similarity_transformation
+
+    # Expand chid to all atoms in the primitive cell
+    rotations = prim_symmetry.get_symmetry_operations()['rotations']
+    map_operations = prim_symmetry.get_map_operations()
+    map_atoms = prim_symmetry.get_map_atoms()
+    print(primitive)
+#    print(map_operations)
+#    print(prim_symmetry.get_symmetry_operations())
+    for na in range(primitive.get_number_of_atoms()):
+        print('Atom number: %d. Rotation:' % (na+1))
+        print(rotations[map_operations[na]].transpose())
+        # R_cart = L R L^-1
+        rotc = similarity_transformation(
+            primitive.get_cell().transpose(), rotations[map_operations[na]])
+        rotct = rotc.transpose()
+#        print(rotc)
+        # R_cart^T B R_cart^-1 (inverse rotation is required to transform)
+# 3d rotational matrix is R_{kij}=sum_{lmn}rotc_{kl}*rotc_{im}*rotc_{jn}
+        for k in range(3):
+          for i in range(3):
+            for j in range(3):
+              for l in range(3):
+                for m in range(3):
+                  for n in range(3):
+                      chid[na][k][i][j] += (chid[map_atoms[na]][l][m][n]
+                                         * rotct[k][l]
+                                         * rotct[i][m]
+                                         * rotct[j][n])
+
+
+def gencastep(fn, species, basis, cart, magmoms=None, commentstr=''):
     cell = Atoms(cell=basis, symbols=species, 
             scaled_positions=cart2direct(cart,basis),magmoms=magmoms)
     try:
@@ -83,7 +150,7 @@ def gencastep(fn,species,basis,cart, magmoms=None, commentstr='', ir=''):
         with open(fn,"r") as fh:
             lines = fh.readlines() #read
         with open(fn, "w") as fh:
-            fh.write('#%s; IR: %s\n' % (commentstr,ir))
+            fh.write('#%s \n' % (commentstr))
             fh.writelines(lines) #write back
     except IOError:
         print("ERROR adding comment to output file %s" % fn)
@@ -134,7 +201,7 @@ def get_epsilon_optic_castep(fn):
 #      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
     return(np.array([e[0],e[3],e[4],e[3],e[1],e[5],e[4],e[5],e[2]]))
 
-def genposcar(fn,modenum,freq,basis,species,cart,ir=''):
+def genposcar(fn,atnum,basis,species,cart):
     cell = Atoms(cell=basis, symbols=species, 
             scaled_positions=cart2direct(cart,basis))
     try:
@@ -145,7 +212,7 @@ def genposcar(fn,modenum,freq,basis,species,cart,ir=''):
         with open(fn,"r") as fh:
             lines = fh.readlines() #read
         with open(fn, "w") as fh:
-            fh.write('%s\n' % 'Epsilon calculation for %d mode, %f cm-1 IR: %s' % (modenum,freq,ir))
+            fh.write('%s\n' % 'Epsilon calculation for atom # %d shifted' % atnum)
             for i in range(1,len(lines)):
                 fh.writelines("%s" % lines[i]) #write back
     except IOError:
@@ -201,10 +268,12 @@ def get_epsilon_dfpt_vasp(vasprunfn):
         print ('Error reading xml file %s', vasprunfnm)
     return(np.array(eps).flatten())
 
-def get_epsilon_dfpt(basedirname,modenum,calculator):
+def get_epsilon_dfpt(basedirname, atnum, dir, calculator):
+    cdir = [0, 0, 0]
+    cdir[dir] = 1
     if(calculator=='vasp'):
-        fnm="%s-%03d-1" %(basedirname, (modenum+1))
-        fnp="%s-%03d+1" %(basedirname, (modenum+1))
+        fnm="POSCAR-%03d-%s-1" % (atnum, ''.join('%d' % dd for dd in cdir)) 
+        fnp="POSCAR-%03d-%s+1" % (atnum, ''.join('%d' % dd for dd in cdir)) 
         if os.path.isfile(os.path.join(fnm,'vasprun.xml')) and os.path.isfile(os.path.join(fnp,'vasprun.xml')):
             try:
                 epsilon_m=get_epsilon_dfpt_vasp(os.path.join(fnm,'vasprun.xml'))
@@ -218,8 +287,8 @@ def get_epsilon_dfpt(basedirname,modenum,calculator):
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'vasprun.xml'))
     elif(calculator=='castep'):
-        fnm="%s-%03d-1" %(basedirname, (modenum+1))
-        fnp="%s-%03d+1" %(basedirname, (modenum+1))
+        fnm="shiftcell-%03d-%s-1.cell" % (atnum, ''.join('%d' % dd for dd in cdir))
+        fnp="shiftcell-%03d-%s+1.cell" % (atnum, ''.join('%d' % dd for dd in cdir))
         if os.path.isfile(os.path.join(fnm,'shiftcell.castep')) and os.path.isfile(os.path.join(fnp,'shiftcell.castep')):
             try:
                 epsilon_m=get_epsilon_dfpt_castep(os.path.join(fnm,'shiftcell.castep'))
@@ -233,8 +302,8 @@ def get_epsilon_dfpt(basedirname,modenum,calculator):
             print('Outputfile %s does not exist!' % os.path.join(fnm,'shiftcell.castep'))
 #    print('Epsilon is: ', epsilon_m,epsilon_p)
     elif(calculator=='abinit'):
-        fnm="%s-%03d-1" %(basedirname, (modenum+1))
-        fnp="%s-%03d+1" %(basedirname, (modenum+1))
+        fnm="shiftcell-%03d-%s-1.abi" % (atnum, ''.join('%d' % dd for dd in cdir)) 
+        fnp="shiftcell-%03d-%s+1.abi" % (atnum, ''.join('%d' % dd for dd in cdir)) 
         if os.path.isfile(os.path.join(fnm,'shiftcell.abo')) and os.path.isfile(os.path.join(fnp,'shiftcell.abo')):
             try:
                 epsilon_m=get_epsilon_abinit(os.path.join(fnm,'shiftcell.abo'))
@@ -249,10 +318,14 @@ def get_epsilon_dfpt(basedirname,modenum,calculator):
     return(epsilon_m,epsilon_p)
 
 #epsm = get_epsilon_optic(os.path.join(fnm,'shiftcell_epsilon.dat'))
-def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
+def get_epsilon_optics(basedirname, atnum, dir, calculator, freq=0.0, cvol=1.0):
+    cdir = [0, 0, 0]
+    cdir[dir] = 1
+
     if(calculator=='vasp'):
-        fnm="%s-%03d-1" %(basedirname, (modenum+1))
-        fnp="%s-%03d+1" %(basedirname, (modenum+1))
+        fnm="EPSILON-%03d-%s-1" % (atnum, ''.join('%d' % dd for dd in cdir))
+        fnp="EPSILON-%03d-%s+1" % (atnum, ''.join('%d' % dd for dd in cdir))
+        print(fnm,fnp)
         if os.path.isfile(os.path.join(fnm,'OUTCAR')) and os.path.isfile(os.path.join(fnp,'OUTCAR')):
             try:
                 epsilon_m=get_epsilon_optics_vasp(os.path.join(fnm,'OUTCAR'),freq)
@@ -267,8 +340,8 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
             print('Outputfile %s does not exist!' % os.path.join(fnm,'OUTCAR'))
 
     elif(calculator=='castep'):
-        fnm="%s-%03d-1" %(basedirname, (modenum+1))
-        fnp="%s-%03d+1" %(basedirname, (modenum+1))
+        fnm="shiftcell-%03d-%s-1.cell" % (atnum, ''.join('%d' % dd for dd in cdir))
+        fnp="shiftcell-%03d-%s+1.cell" % (atnum, ''.join('%d' % dd for dd in cdir))
         if os.path.isfile(os.path.join(fnm,'shiftcell_epsilon.dat')) and os.path.isfile(os.path.join(fnp,'shiftcell_epsilon.dat')):
             try:
                 epsilon_m=get_epsilon_optics_castep(os.path.join(fnm,'shiftcell_epsilon.dat'))
@@ -281,8 +354,8 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'shiftcell_epsilon.dat'))
     elif(calculator=='cp2k'):
-        fnm="%s-%05d-1" %(basedirname, (modenum+1))
-        fnp="%s-%05d+1" %(basedirname, (modenum+1))
+        fnm="shiftcell-%05d-%s-1.xyz" % (atnum, ''.join('%d' % dd for dd in cdir)) 
+        fnp="shiftcell-%05d-%s+1.xyz" % (atnum, ''.join('%d' % dd for dd in cdir)) 
         if os.path.isfile(os.path.join(fnm,'polar.out')) and os.path.isfile(os.path.join(fnp,'polar.out')):
             try:
                 epsilon_m=get_epsilon_cp2k(os.path.join(fnm,'polar.out'))/cvol*Angst2Bohr**3
@@ -295,12 +368,12 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'polar.out'))
     elif(calculator=='crystal'):
-        fnm="%s-%05d-1" %(basedirname, (modenum+1))
-        fnp="%s-%05d+1" %(basedirname, (modenum+1))
-        if os.path.isfile(os.path.join(fnm,"".join('%s.out' %fnm))) and os.path.isfile(os.path.join(fnp,"".join('%s.out' %fnp))):
+        fnm="shiftcell-%05d-%s-1.out" % (atnum, ''.join('%d' % dd for dd in cdir)) 
+        fnp="shiftcell-%05d-%s+1.out" % (atnum, ''.join('%d' % dd for dd in cdir)) 
+        if os.path.isfile(fnm) and os.path.isfile(fnp):
             try:
-                epsilon_m=get_epsilon_crystal(os.path.join(fnm,"".join('%s.out' %fnm)))/cvol*Angst2Bohr**3
-                epsilon_p=get_epsilon_crystal(os.path.join(fnp,"".join('%s.out' %fnp)))/cvol*Angst2Bohr**3
+                epsilon_m=get_epsilon_crystal(fnm)/cvol*Angst2Bohr**3
+                epsilon_p=get_epsilon_crystal(fnp)/cvol*Angst2Bohr**3
             except:
                 epsilon_m=np.zeros(9)
                 epsilon_p=np.zeros(9)
@@ -309,8 +382,8 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
             epsilon_p=np.zeros(9)
             print('Outputfile %s does not exist!' % os.path.join(fnm,'polar.out'))
     elif(calculator=='cp2kv6'):
-        fnm="%s-%05d-1" %(basedirname, (modenum+1))
-        fnp="%s-%05d+1" %(basedirname, (modenum+1))
+        fnm="shiftcell-%05d-%s-1.gui" % (atnum, ''.join('%d' % dd for dd in cdir)) 
+        fnp="shiftcell-%05d-%s+1.gui" % (atnum, ''.join('%d' % dd for dd in cdir)) 
         if os.path.isfile(os.path.join(fnm,'polar.out')) and os.path.isfile(os.path.join(fnp,'polar.out')):
                 epsilon_m=get_epsilon_cp2kv6(os.path.join(fnm,'polar.out'))/cvol*Angst2Bohr**3
                 epsilon_p=get_epsilon_cp2kv6(os.path.join(fnp,'polar.out'))/cvol*Angst2Bohr**3
@@ -321,7 +394,7 @@ def get_epsilon_optics(basedirname,modenum,calculator,freq=0.0,cvol=1.0):
 
     return(epsilon_m,epsilon_p)
 
-def genxyz(fn,modenum,freq,basis,species,cart):
+def genxyz(fn,atnum,basis,species,cart):
     print("Generating file %s" % fn)
     try:
         fh = open(fn, 'w')
@@ -329,19 +402,19 @@ def genxyz(fn,modenum,freq,basis,species,cart):
         print("ERROR Couldn't open output file %s for writing" % fn)
         return(-1)
     fh.write('%d\n' % len(species))
-    fh.write('%s\n' % 'Epsilon calculation for %d mode, %f cm-1' % (modenum,freq))
+    fh.write('%s\n' % 'Epsilon calculation for atom # %d' % atnum)
     for i in range(len(species)):
         fh.write("%s  %s\n" % (species[i],
                              "".join("    % 15.10f" % c for c in cart[i])))
 
-def gengui(fn,modenum,freq,basis,numbers,cart,ir=''):
+def gengui(fn,atnum,basis,numbers,cart,ir=''):
     print("Generating file %s" % fn)
     try:
         fh = open(fn, 'w')
     except IOError:
         print("ERROR Couldn't open output file %s for writing" % fn)
         return(-1)
-    fh.write(' 3 1 3 %s\n' % 'Epsilon calculation for %d mode, %f cm-1 IR: %s' % (modenum,freq,ir))
+    fh.write(' 3 1 3 %s\n' % 'Epsilon calculation for atom # %d' % atnum)
     for i in range(3):
         fh.write('%s\n' % "".join("%12.9f " % b for b in basis[i]))
     fh.write(" 1\n 1.0000000 0.0000000 0.0000000\n")
@@ -471,7 +544,7 @@ def get_epsilon_crystal(fn):
 #    print(epsilon)
 
     return(epsilon)
-def genabinit(fn,modenum,freq,basis,species,cart,ir=''):
+def genabinit(fn, atnum, basis, species, cart):
     cell = Atoms(cell=basis, symbols=species, 
             scaled_positions=cart2direct(cart,basis))
     try:
@@ -482,7 +555,7 @@ def genabinit(fn,modenum,freq,basis,species,cart,ir=''):
         with open(fn,"r") as fh:
             lines = fh.readlines() #read
         with open(fn, "w") as fh:
-            fh.write('#%s\n' % 'Epsilon calculation for %d mode, %f cm-1 IR %s' % (modenum,freq,ir))
+            fh.write('#%s\n' % 'Epsilon calculation for atom # %d' % atnum)
             for i in range(len(lines)):
                 fh.writelines("%s" % lines[i]) #write back
     except IOError:
@@ -510,8 +583,9 @@ def get_epsilon_abinit(fn):
             break
     return(np.array(e))
 
+# In atomic units mass of electron me=1 ratio: mass_atom/me=1837.152
+mau=1837.152
 Angst2Bohr=1.889725989
-mau = 1837.152
 #print sqrt(hbar/AMU/10e12)*10e10 #Angstrom
 
 parser = argparse.ArgumentParser(description='The program is to calculate Raman tensor with finite displacements method with VASP/CASTEP/CP2K/ABINIT/CRYSTAL code')
@@ -531,7 +605,10 @@ parser.add_argument("-m", "--mult", action="store", type=float, dest="mult", def
 parser.add_argument("--freq", action="store", type=float, dest="epsfreq", default=0.0, help="Frequency for epsilon delta. Default 0")
 parser.add_argument("--irreps", dest="irreps", action="store_true",
                                                     default=False, help="Find Irreducible representations and print in input files")
-
+parser.add_argument("--nac", dest="nac", action="store_true",
+                                                    default=False, help="Apply NAC")
+parser.add_argument("--alldir", dest="alldir", action="store_true",
+                                                    default=False, help="Shift along 3 directions (safer)")
 
 args = parser.parse_args()
 
@@ -575,66 +652,75 @@ if (args.read_force_constants):
                   unitcell_filename=args.str_fn,
                   calculator=calc, factor=factorcm,
                   force_constants_filename='FORCE_CONSTANTS',
-                  symmetrize_fc=False)
+                  symmetrize_fc=True, is_nac=args.nac)
 else:
     ph = phonopy.load(supercell_matrix=[1, 1, 1],
                   primitive_matrix=[1, 0, 0, 0, 1, 0, 0, 0, 1],
                   unitcell_filename=args.str_fn,
                   calculator=calc, factor=factorcm,
                   force_sets_filename=args.fsetfn,
-                  symmetrize_fc=False)
+                  symmetrize_fc=True, is_nac=args.nac)
 
-species=ph.primitive.get_chemical_symbols()
-numbers=ph.primitive.get_atomic_numbers()
-masses=ph.primitive.get_masses()
-natom=ph.primitive.get_number_of_atoms()
-basis=ph.primitive.get_cell()
-if(args.calc=='castep'):
-    magmoms=ph.primitive.get_magnetic_moments()
-print("primitive")
-print(ph.primitive.get_scaled_positions())
-cart=direct2cart(ph.primitive.get_scaled_positions(),basis)
-cvol=np.dot(basis[0],np.cross(basis[1],basis[2]))
-print(species)
-print(numbers)
-print(cart)
-print(cart2direct(cart,basis))
-print(basis)
+species = ph.primitive.get_chemical_symbols()
+numbers = ph.primitive.get_atomic_numbers()
+masses = ph.primitive.get_masses()
+natom = ph.primitive.get_number_of_atoms()
+basis = ph.primitive.get_cell()
+cart = direct2cart(ph.primitive.get_scaled_positions(), basis)
+cvol = np.dot(basis[0],np.cross(basis[1],basis[2]))
+if(args.calc == 'castep'):
+    magmoms = ph.primitive.get_magnetic_moments()
+#print("primitive")
+#print(ph.primitive.get_scaled_positions())
+#print(species)
+#print(numbers)
+#print(basis)
 
+a1 = np.linalg.norm(basis[0])
+a2 = np.linalg.norm(basis[1])
+a3 = np.linalg.norm(basis[2])
+
+ir_labels=["" for x in range(natom*3)]
 if (args.irreps):
 # Hack to do irrep analysis. Spin order will be restored later
     ph.primitive.set_magnetic_moments(None)
 # Set IR for Gamma point
     ph.set_irreps([0.0,0.0,0.0])
-    ir_labels=[]
     print(ph.get_irreps()._ir_labels)
-    for ir in ph.get_irreps()._ir_labels:
-        if ( ir is None):
-            ir_labels.append('None')
-        elif ('T' in ir):
-            for i in range(3):
-                ir_labels.append(ir)
-            continue
-        elif  ('E' in ir):
-            for i in range(2):
-                ir_labels.append(ir)
-            continue
-        else:
-            ir_labels.append(ir)
+    for i, (deg_set, ir) in enumerate(zip(ph.get_irreps()._degenerate_sets,
+                                          ph.get_irreps()._ir_labels)):
+        for j in deg_set:
+            if (ir is None):
+                ir_labels[j] = "Non"
+            else:
+                ir_labels[j] = ir
+        print("%d %s" %  (i, ir))
+#    for ir in ph.get_irreps()._ir_labels:
+#        if ( ir is None):
+#            ir_labels.append('None')
+#        elif ('T' in ir):
+#            for i in range(3):
+#                ir_labels.append(ir)
+#            continue
+#        elif  ('E' in ir):
+#            for i in range(2):
+#                ir_labels.append(ir)
+#            continue
+#        else:
+#            ir_labels.append(ir)
     print(ir_labels)
-else:
-    ir_labels=["" for x in range(natom*3)]
+
 
 dmat = ph.get_dynamical_matrix_at_q([0,0,0])
 eigvals, evecs = np.linalg.eigh(dmat)
 
-frequencies=np.sqrt(np.abs(eigvals.real)) * np.sign(eigvals) 
+frequencies = np.sqrt(np.abs(eigvals.real)) * np.sign(eigvals) 
 for i in range(len(frequencies)):
 # Accoustic modes could be zero, shif frequency a little bit
-    if(abs(frequencies[i]*factorcm)<1):
-        frequencies[i]=1/factorcm
+    if(abs(frequencies[i] * factorcm) < 1):
+        frequencies[i] = 1/factorcm
 
-eigvecs=evecs.T
+eigvecs = evecs.T
 
 #for i in range(len(frequencies)):
 #    print(frequencies[i]*factorcm)
@@ -643,65 +729,96 @@ eigvecs=evecs.T
 
 # GENERATION OF DISPLACEMENTS INPUT FILES
 #j - mode number; i -atom number
+spgnumstr = ph.symmetry.get_international_table().split()[1]
+spgnum = int(spgnumstr[1:-1])
+
+print('Spacegroup number = %d' % spgnum)
+
+# Triclinic or monoclinic or orthorhombic
+direction = [1, 1, 1]
+spgclass = ""
+# Tetragonal or hexagonal
+if (spgnum > 74 and spgnum < 143):
+    spgclass = "tetragonal"
+    if (a1 == a2):
+# For y direction get value from x
+        direction = [1, -1, 1]
+    elif (a1 == a3):
+# For x direction get value from z
+        direction = [-3, 1, 1]
+    elif (a2 == a3):
+# For z direction get value from y
+        direction = [1, 1, -2]
+elif (spgnum > 142 and spgnum < 168):
+    spgclass = "trigonal"
+elif (spgnum > 167 and spgnum < 195):
+    spgclass = "hexagonal"
+    direction = [1, -1, 1]
+# Cubic
+elif (spgnum > 194):
+# For y,z directions get value from x
+    spgclass = "cubic"
+    direction = [1, -1, -1]
+print('Shift along directions:')
+print(direction)
+#print(ph.symmetry.get_independent_atoms())
 
 if (args.policy == 'displ'):
-    for i in range(len(frequencies)):
-        cartshiftdm=[]
-        cartshiftdp=[]
-
-#        print ('mode: %d %8.5f' % ((i+1),frequencies[i]))
-
-#        print('====eigenvector:====')
-#        for j in range(len(species)):
-#            print(" ".join('% 9.7f' % eigvecs[i][j*3+l].real for l in range(3)))
-#        print('delta = %f' % args.delta)
-
-#        print('shiftvector:')
-
-        for j in range(len(species)):
-            shiftvec=[0.0e0,0.0e0,0.0e0]
-            for l in range(3):
-                shiftvec[l]=eigvecs[i][j*3+l].real*args.delta*sqrt(1/(masses[j]*mau))
-#            print(["%10.7f" % shiftvec[l] for l in range(3)])
-            cartshiftdm.append(cart[j]-np.array(shiftvec))
-            cartshiftdp.append(cart[j]+np.array(shiftvec))
-
-#        print('shifted:')
-#        for cartat in cartshiftdm:
-#            print ("%12.9f %12.9f %12.9f" % (cartat.tolist()[0], cartat.tolist()[1], cartat.tolist()[2]))
-        if(args.calc=='castep'):
-            fnm="shiftcell-%03d-1.cell" % (i+1)
-            fnp="shiftcell-%03d+1.cell" % (i+1)
-            gencastep(fnm,species,basis,cartshiftdm, magmoms=magmoms, 
-                    commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta),ir=ir_labels[i])
-            gencastep(fnp,species,basis,cartshiftdp, magmoms=magmoms, 
-                    commentstr='freq = %9.4f cm-1; Delta=%6.4f' % ((frequencies[i] * factorcm),args.delta),ir=ir_labels[i])
-        elif(args.calc=='vasp'):
-            poscarfnm="POSCAR-%03d-1" % (i+1)
-            poscarfnp="POSCAR-%03d+1" % (i+1)
-            genposcar(poscarfnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm,ir=ir_labels[i])
-            genposcar(poscarfnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp,ir=ir_labels[i])
-#Hack to support cp2k v6
-        elif(calc=='cp2k'):
-            poscarfnm="shiftcell-%05d-1.xyz" % (i+1)
-            poscarfnp="shiftcell-%05d+1.xyz" % (i+1)
-            genxyz(poscarfnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm)
-            genxyz(poscarfnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp)
-        elif(args.calc=='abinit'):
-            fnm="shiftcell-%03d-1.abi" % (i+1)
-            fnp="shiftcell-%03d+1.abi" % (i+1)
-            genabinit(fnm,i+1,frequencies[i]*factorcm,basis,species,cartshiftdm,ir=ir_labels[i])
-            genabinit(fnp,i+1,frequencies[i]*factorcm,basis,species,cartshiftdp,ir=ir_labels[i])
-        elif(calc=='crystal'):
-            fnm="shiftcell-%05d-1.gui" % (i+1)
-            fnp="shiftcell-%05d+1.gui" % (i+1)
-            gengui(fnm,i+1,frequencies[i]*factorcm,basis,numbers,cartshiftdm,ir=ir_labels[i])
-            gengui(fnp,i+1,frequencies[i]*factorcm,basis,numbers,cartshiftdp,ir=ir_labels[i])
+    for i in ph.symmetry.get_independent_atoms():
+        cdir = np.array([0, 0, 0])
+        for d in range(len(direction)):
+            if (direction[d] == 1 or args.alldir):
+                cdir[d] = 1
+                print('Shift atom %s along direction: %s' % (species[i],
+                       ''.join('%i ' % dd for dd in cdir)))
+# Shift atom position
+                cartshiftdm = deepcopy(cart)
+                cartshiftdp = deepcopy(cart)
+                a2b = Angst2Bohr
+                if(args.calc == 'abinit'):
+                    a2b = 1
+                print(cartshiftdm[i])
+                cartshiftdp[i][d] += 0.01 / a2b
+                cartshiftdm[i][d] -= 0.01 / a2b
+                print(cartshiftdm[i])
+                if(args.calc == 'castep'):
+                    fnm="shiftcell-%03d-%s-1.cell" % (i, ''.join('%d' % dd for dd in cdir))
+                    fnp="shiftcell-%03d-%s+1.cell" % (i, ''.join('%d' % dd for dd in cdir))
+                    gencastep(fnm, species, basis, cartshiftdm, magmoms=magmoms,
+                            commentstr = 'Atom # %i displacement +' % i)
+                    gencastep(fnp, species, basis, cartshiftdp, magmoms=magmoms,
+                            commentstr = 'Atom # %i displacement -' % i)
+                elif(args.calc == 'vasp'):
+                    poscarfnm="POSCAR-%03d-%s-1" % (i, ''.join('%d' % dd for dd in cdir))
+                    poscarfnp="POSCAR-%03d-%s+1" % (i, ''.join('%d' % dd for dd in cdir))
+                    genposcar(poscarfnm, i, basis, species, cartshiftdm)
+                    genposcar(poscarfnp, i, basis, species, cartshiftdp)
+        #Hack to support cp2k v6
+                elif(calc == 'cp2k'):
+                    poscarfnm="shiftcell-%05d-%s-1.xyz" % (i, ''.join('%d' % dd for dd in cdir))
+                    poscarfnp="shiftcell-%05d-%s+1.xyz" % (i, ''.join('%d' % dd for dd in cdir))
+                    genxyz(poscarfnm, i, basis, species, cartshiftdm)
+                    genxyz(poscarfnp, i, basis, species, cartshiftdp)
+                elif(args.calc == 'abinit'):
+                    fnm="shiftcell-%03d-%s-1.abi" % (i, ''.join('%d' % dd for dd in cdir))
+                    fnp="shiftcell-%03d-%s+1.abi" % (i, ''.join('%d' % dd for dd in cdir))
+                    genabinit(fnm, i, basis, species, cartshiftdm)
+                    genabinit(fnp, i, basis, species, cartshiftdp)
+                elif(calc=='crystal'):
+                    fnm="shiftcell-%05d-%s-1.gui" % (i, ''.join('%d' % dd for dd in cdir))
+                    fnp="shiftcell-%05d-%s+1.gui" % (i, ''.join('%d' % dd for dd in cdir))
+                    gengui(fnm, i, basis, numbers, cartshiftdm)
+                    gengui(fnp, i, basis, numbers, cartshiftdp)
+# Reset direction                
+                cdir = [0, 0, 0]
     if(args.calc=='cp2k'):
         print('A B C for input file is:')
         print('A %s' % "".join("%14.9f" % b for b in basis[0]))
         print('B %s' % "".join("%14.9f" % b for b in basis[1]))
         print('C %s' % "".join("%14.9f" % b for b in basis[2]))
+
+#    print(ph.symmetry.get_map_atoms())
+
 
 ######################## Calculate RAMAN ###########################
 else:
@@ -710,50 +827,138 @@ else:
         sys.exit(1)
 
     try:
-        out_fh = open(args.out_fn, 'w')
+        fho = open(args.out_fn, 'w')
     except IOError:
         print("ERROR Couldn't open output file for writing, exiting...")
         sys.exit(1)
-    out_fh.write("# N     Freq         xx         xy         xz         yx         yy         yz         zx         zy         zz         Alpha2        Gamma2         Ipar         Iperp         Itot\n")
-    for i in range(len(frequencies)):
-        cartshiftdm=[]
-        cartshiftdp=[]
-        G0=0
-        G1=0
-#        print('mode number: %d; dirname %s; freq: %f' %((j+1),vasprunfnp,frequencies[natom*3-j-1]*args.freqfactor))
-########################  DFPT  ###########################
-        if (args.policy == 'calcdfpt'):
-            epsm, epsp = get_epsilon_dfpt(basedirname,i,args.calc)
-########################  OPTIC  ###########################
-        else:
-            epsm, epsp = get_epsilon_optics(basedirname,i,args.calc,freq=args.epsfreq,cvol=cvol)
-
-        if (np.linalg.norm(epsp)==0 or np.linalg.norm(epsm)==0):
-            print ('Epsilon data damaged in for mode %d. Norm is zero' % (i+1))
-            continue
-        print('Got epsilon values difference:')
-
-# Atomic units: sqrt(Bohr/amu) (me=1, e=1,hbar=1)
-        alpha=(epsp-epsm)*sqrt(cvol)/(4*pi)/(2*args.delta)
-# Calculate invariance in Long's notation
-#                     0    1    2    3    4    5    6    7    8
-#      9-components:  xx   xy   xz   yx   yy   yz   zx   zy   zz
-        Alpha=((alpha[0]+alpha[4]+alpha[8]))/3
-        Gamma2=( (alpha[0]-alpha[4])**2+(alpha[4]-alpha[8])**2+(alpha[8]-alpha[0])**2 )/2
-        Gamma2+=3*( (alpha[1])**2 + (alpha[2])**2 + (alpha[5])**2 )
-
-        Iperp=Gamma2/15
-        Ipar=( 45*Alpha**2 + 4*Gamma2 )/45
-        print('%4d\t%8.2f\t%12.8f\t%12.8f\t%12.8f' % ((i+1), frequencies[i]*factorcm,Ipar,Iperp,(Ipar+Iperp)))
-
-        out_fh.write('%4d  %8.2f  ' % ((i+1), frequencies[i]*factorcm))
-        out_fh.write(' '.join(" %9.6f" % alpha[i] for i in range(9)))
-        out_fh.write('  % 12.10f % 12.10f % 12.10f % 12.10f % 12.10f\n' % (Alpha**2,Gamma2,Ipar,Iperp,(Ipar+Iperp)))
-
-    #        print ('\nItotal=%5.3f Iparal=%5.3f Iperp=%5.3f' % ((10*G0+7*G2+5*G1), (10*G0+4*G2), (5*G1+3*G2)))
-    # Multiplyer for Intensity at room temperature with 514.5nm excitation line
-    #        print ('Itot*C=%10.8f\n' % ( ( (19436.35-frequencies[j])**4 )  / ( 1 - exp ( -0.2281*Temp*frequencies[j] ) ) / (30*1E12*frequencies[j])*(10*G0+7*G2+5*G1)   )   )
-
-
-    out_fh.close()
     
+    atindep = ph.symmetry.get_independent_atoms()
+    chid = np.zeros(natom * 3 * 3 * 3, dtype = np.double).reshape(natom, 3, 3, 3)
+
+    a2b = Angst2Bohr
+    if(args.calc == 'abinit'):
+        a2b = 1
+# First iteration on non symmetric directions 
+    print("       E(ev)        XX           YY          ZZ          XY          YZ          ZX")
+    for n in atindep:
+#        cdir = np.array([0, 0, 0])
+        for k in range(3):
+            if ((direction[k] == 1) or args.alldir):
+#                cdir[d] = 1
+                if (args.policy == 'calcdfpt'):
+                    epsm, epsp = get_epsilon_dfpt(basedirname, n,
+                                                  k, args.calc)
+########################  OPTIC  ###########################
+                else:
+                    epsm, epsp = get_epsilon_optics(basedirname, 
+                                                    n, k,
+                                                    args.calc,
+                                                    freq=args.epsfreq,
+                                                    cvol=cvol)
+
+                if (np.linalg.norm(epsp) == 0 or np.linalg.norm(epsm) == 0):
+                    print ('Warning. Epsilon data damaged for atom %d. Direction %s. Norm is zero' % (n,'xyz'[k]))
+                    continue
+#                print('Got epsilon values difference:')
+                diff = epsp - epsm
+                diff = diff.reshape(3, 3)
+#                print(diff)
+                for i in range(3):
+                    for j in range(3):
+#                        print(diff[i][j])
+                        chid[n][k][i][j] = diff[i][j]/(0.02/a2b)
+#            cdir = np.array([0, 0, 0])
+    if (not args.alldir):
+# Fill symmetric directions
+      print(type(ph.primitive))
+      print(type(ph.get_primitive_symmetry()))
+      print('Site point group:')
+      map_atoms = ph.get_primitive_symmetry().get_map_atoms()
+      print(np.unique(map_atoms, return_counts=True))
+      print(type(map_atoms))
+      unique, counts = np.unique(map_atoms, return_counts=True)
+      for u, c in zip(unique, counts):
+#      print(zip(np.unique(map_atoms, return_counts=True)))
+          sitesymop = ph.get_primitive_symmetry().get_site_symmetry(u)
+          print('Unique atom %d site symmetry  multiplicity %d' %(u,
+                                                                    c))
+          print(spglib.get_pointgroup(sitesymop))
+         
+          print(sitesymop)
+
+      print(map_atoms)
+      print(np.unique(map_atoms, return_counts=True))
+      for n in atindep:
+          for k in range(3):
+            if (direction[k] < 0):
+                if(spgnum > 74 and spgnum < 143):
+                  expand_mat2d(chid, n, basis, spgclass, direction)
+                elif(spgnum > 142 and spgnum < 195):
+                  expand_mat2d(chid, n, basis, spgclass, direction)
+
+
+#                chid[n][k][i][j] = chid[n][-1 * direction[k] - 1][i][j] 
+
+
+#    print(ph.get_nac_params())
+    expand_chid(chid, ph.primitive, ph.get_primitive_symmetry()) 
+    print('         xx           xy          xz         yx         yy           yz         zx        zy          zz')
+    for n in range(natom):
+        print(n)
+        for k in range(3):
+            print("%d %s" % (k,''.join("% 11.6f " % (chid[n][k][i][j]*7.5) for i in range(3) for j in range(3))))
+
+#    chidfull = np.zeros(natom * 3 * 3 * 3).reshape(natom, 3, 3, 3)
+#    atmap = ph.symmetry.get_map_atoms()
+#    print(ph.symmetry.get_map_atoms())
+
+#    for n in range(natom):
+#        idx = np.where(atindep == atmap[n])
+#        chidfull[n] = chid[idx]
+    
+    Raman = np.zeros(natom*3*3*3, dtype = np.double).reshape(natom*3,3,3)
+# m - Mode num
+
+    for m in range(natom*3):
+        for i in range(3):
+            for j in range(3):
+# n - Atom num
+                for n in range(natom):
+                    for k in range(3):
+                        Raman[m][i][j] += (chid[n][k][i][j]
+                                           * eigvecs[m, n*3 + k].real
+                                           * sqrt(1/masses[n]/mau)/sqrt(cvol))
+                    
+
+    for m in range(natom*3):
+        print('mode %d freq %8.4f %s' % (m, frequencies[m]*factorcm, ir_labels[m]))
+        for n in range(natom):
+            print('%2d: %s' % (n, ''.join("% 9.7f " % (eigvecs[m, n*3 + kk].real * sqrt(1.0/masses[n]/mau)/sqrt(cvol)) for kk in range(3))))
+# i,j = x,y,z
+#        print('Atom: %d' % m)
+
+    fho.write("%s%s%s%s%s" % ("# N     Freq         xx              xy   ",
+                          "          xz             yx              yy   ",
+                          "          yz            zx             zy   ",
+                          "          zz               Alpha2      Gamma2",
+                          "        Ipar        Iperp        Itot\n"))
+
+    for m in range(natom*3):
+        fho.write('%3d %8.3f ' % (m + 1, frequencies[m] * factorcm))
+        for k in range(3):
+            fho.write('%s ' % ''.join('% 14.10f ' % r for r in Raman[m][k]))
+
+        Alpha=((Raman[m][0][0] + Raman[m][1][1] + Raman[m][2][2]))/3
+        Gamma2 = ((Raman[m][0][0] - Raman[m][1][1])**2
+                + (Raman[m][1][1] - Raman[m][2][2])**2
+                + (Raman[m][2][2] - Raman[m][0][0])**2 ) / 2
+        Gamma2 += 3 * ((Raman[m][0][1])**2 
+                  + (Raman[m][0][2])**2 
+                  + (Raman[m][1][2])**2)
+
+        Iperp = Gamma2 / 15
+        Ipar = (45*Alpha**2 + 4*Gamma2)/45
+
+        fho.write('  % 12.8f % 12.8f % 12.8f % 12.8f % 12.8f\n' % 
+                  (Alpha**2, Gamma2, Ipar, Iperp, (Ipar + Iperp)))
+    fho.close()
